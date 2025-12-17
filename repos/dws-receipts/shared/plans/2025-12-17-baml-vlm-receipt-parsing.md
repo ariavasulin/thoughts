@@ -205,10 +205,10 @@ cd dws-app && npx baml-cli generate
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] BAML files exist: `ls dws-app/baml_src/*.baml`
-- [ ] Client generated: `ls dws-app/baml_client/`
-- [ ] No generation errors: `cd dws-app && npx baml-cli generate`
-- [ ] Build passes: `cd dws-app && npm run build`
+- [x] BAML files exist: `ls dws-app/baml_src/*.baml`
+- [x] Client generated: `ls dws-app/baml_client/`
+- [x] No generation errors: `cd dws-app && npx baml-cli generate`
+- [x] Build passes: `cd dws-app && npm run build`
 
 #### Manual Verification:
 - [ ] Review generated types in `baml_client/` for correctness
@@ -310,9 +310,9 @@ export async function POST(request: NextRequest) {
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] No TypeScript errors: `cd dws-app && npx tsc --noEmit`
-- [ ] Build passes: `cd dws-app && npm run build`
-- [ ] Lint passes: `cd dws-app && npm run lint`
+- [x] No TypeScript errors: `cd dws-app && npx tsc --noEmit` (pre-existing errors in other files, none from OCR route)
+- [x] Build passes: `cd dws-app && npm run build`
+- [x] Lint passes: `cd dws-app && npm run lint` (pre-existing errors in other files, none from OCR route)
 
 #### Manual Verification:
 - [ ] Upload a receipt image and verify extraction returns data
