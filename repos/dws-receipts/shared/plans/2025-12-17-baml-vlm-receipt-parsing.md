@@ -135,12 +135,12 @@ baml_client/
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] Package installed: `cd dws-app && npm list @boundaryml/baml`
-- [ ] BAML directory exists: `ls dws-app/baml_src/`
-- [ ] No build errors: `cd dws-app && npm run build`
+- [x] Package installed: `cd dws-app && npm list @boundaryml/baml` (v0.214.0)
+- [x] BAML directory exists: `ls dws-app/baml_src/`
+- [x] No build errors: `cd dws-app && npm run build`
 
 #### Manual Verification:
-- [ ] `.env.local` has `OPENROUTER_API_KEY` placeholder
+- [ ] `.env.local` has `OPENROUTER_API_KEY` set
 
 **Implementation Note**: After completing this phase, pause for confirmation before proceeding.
 
