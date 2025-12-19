@@ -4,11 +4,12 @@ researcher: Claude
 git_commit: 9c97ecd0dab4a93347949e543a1d31978613ef2b
 branch: receipt-editing
 repository: DWS-Receipts
-topic: "Receipt Upload Flow - BAML Extraction and Confirmation Page"
-tags: [research, codebase, receipt-upload, baml, ocr, categories, confirmation-flow]
+topic: "Receipt Upload Flow - BAML Extraction, Confirmation Page, and Duplicate Detection"
+tags: [research, codebase, receipt-upload, baml, ocr, categories, confirmation-flow, duplicate-detection]
 status: complete
 last_updated: 2025-12-18
 last_updated_by: Claude
+last_updated_note: "Added comprehensive duplicate detection research"
 ---
 
 # Research: Receipt Upload Flow - BAML Extraction and Confirmation Page
@@ -25,12 +26,15 @@ How does the current receipt upload flow work? Specifically:
 1. What does the BAML function extract (date, amount, category)?
 2. When is the confirmation details page shown?
 3. How are categories handled currently?
+4. How does duplicate receipt detection work, and what edge cases exist?
 
 The goal is to understand the existing implementation to enable skipping the confirmation page when BAML successfully extracts all required fields.
 
 ## Summary
 
 The current receipt upload flow **always** shows the confirmation details page (`ReceiptDetailsCard`) after OCR extraction, regardless of extraction success. The BAML function currently extracts only **date** and **amount** - it does not extract categories. Categories are fetched separately from the database API and must be manually selected by the user. There is no confidence scoring or validation on extracted values; null values simply indicate the field couldn't be determined.
+
+**Duplicate Detection**: The system checks for duplicates based on exact match of `user_id`, `receipt_date`, and `amount`. If a match is found, the `description` field is used as a differentiator - submission is **blocked** if descriptions match or both are empty. This check occurs client-side after the user clicks submit, before the actual receipt creation. The duplicate check is entirely bypassed in edit mode, and there's no image-based comparison.
 
 ## Detailed Findings
 
@@ -220,6 +224,74 @@ Before final submission:
 2. If duplicate found, compares descriptions
 3. Blocks submission if description matches or both are empty
 
+### 5. Duplicate Receipt Detection (Detailed)
+
+**API Endpoint**: `dws-app/src/app/api/receipts/check-duplicate/route.ts`
+
+#### Duplicate Detection Criteria
+
+**Primary Criteria (Server-Side):**
+1. **`user_id`** - Only checks within the same user's receipts (line 31)
+2. **`receipt_date`** - Exact string match in YYYY-MM-DD format (line 32)
+3. **`amount`** - Exact numeric match (line 33)
+
+**Secondary Criteria (Client-Side - `receipt-details-card.tsx:200-205`):**
+4. **`description`/`notes`** - Case-insensitive, trimmed comparison
+   - Used as a differentiator when date+amount match
+   - If descriptions match OR both are empty → **blocked**
+   - If descriptions differ → **allowed**
+
+**What is NOT checked:**
+- Image hash or visual similarity
+- Receipt vendor/merchant name
+- Category
+- Fuzzy matching on date or amount
+
+#### When Duplicate Check Occurs
+
+The check happens **after** the user clicks "Submit Receipt" in the confirmation dialog, **before** the actual receipt creation API call:
+
+```
+User clicks Submit → Duplicate Check API → If blocked: show warning toast
+                                         → If allowed: POST /api/receipts
+```
+
+#### User Experience When Duplicate Found
+
+**Toast Message** (`receipt-details-card.tsx:206-212`):
+- Title: "Potential Duplicate Found"
+- Description: "A receipt with the same date and amount already exists with a similar or empty description. Please provide a unique description or cancel."
+- Duration: 8000ms (8 seconds)
+- Form remains open for user to modify description
+
+**Submission Behavior:**
+- **BLOCKED** (not just warned) until user changes description or cancels
+- User cannot bypass by clicking submit again with same data
+
+#### Edge Cases and Limitations
+
+| Edge Case | Current Behavior | Impact |
+|-----------|------------------|--------|
+| Edit mode | Duplicate check **bypassed entirely** (`receipt-details-card.tsx:144`) | User can create duplicates via editing |
+| Different users | Only checks current user's receipts | Cross-user duplicates possible |
+| Same image, different description | **Allowed** - no image comparison | Duplicate images can slip through |
+| Amount $10.00 vs $10.01 | Not detected (exact match only) | OCR errors bypass detection |
+| Rapid double-click | No race condition protection | Could create duplicates |
+| Network failure | Shows error toast, blocks submission | Cannot submit if check fails |
+
+#### Database Query (`check-duplicate/route.ts:28-33`)
+
+```typescript
+const { data: existingReceipts, error } = await supabase
+  .from('receipts')
+  .select('id, description')
+  .eq('user_id', userId)
+  .eq('receipt_date', receipt_date)
+  .eq('amount', numericAmount);
+```
+
+No database-level unique constraints exist on (user_id, receipt_date, amount, description).
+
 ## Code References
 
 - `dws-app/baml_src/receipts.baml:2-24` - BAML extraction definition
@@ -229,7 +301,10 @@ Before final submission:
 - `dws-app/src/components/receipt-details-card.tsx:40-49` - Component props interface
 - `dws-app/src/components/receipt-details-card.tsx:87-123` - Category fetching
 - `dws-app/src/components/receipt-details-card.tsx:129-132` - Required field validation
+- `dws-app/src/components/receipt-details-card.tsx:179-227` - Duplicate check flow in handleSubmit
+- `dws-app/src/components/receipt-details-card.tsx:200-215` - Description comparison logic
 - `dws-app/src/app/api/categories/route.ts:16-19` - Categories query
+- `dws-app/src/app/api/receipts/check-duplicate/route.ts:28-33` - Duplicate check database query
 
 ## Architecture Documentation
 
@@ -279,4 +354,16 @@ To implement skipping the confirmation page when BAML extracts all fields succes
 
 3. **User override**: Should there be a way for users to still review before submit (e.g., a "Review before submit" setting)?
 
-4. **Error recovery**: If auto-submit fails (e.g., duplicate detected), what's the fallback UX?
+4. **Duplicate handling in auto-submit flow**: When auto-submitting (skipping confirmation), how should duplicates be handled?
+   - Option A: Run duplicate check first, show confirmation dialog only if duplicate detected
+   - Option B: Auto-submit fails silently, then show confirmation dialog with warning
+   - Option C: Always show a brief "submitting..." state that can be interrupted if duplicate found
+
+5. **Duplicate detection timing**: Currently duplicate check happens after user clicks submit. For auto-submit, should it:
+   - Run during OCR phase (before auto-submit decision)?
+   - Run as part of auto-submit (and fallback to dialog if duplicate)?
+
+6. **Description requirement**: If auto-submitting, notes/description will be empty. This would be blocked by duplicate detection if a same date+amount receipt already exists with empty description. Should auto-submit:
+   - Skip duplicate check entirely?
+   - Use a generated description (e.g., category name)?
+   - Always go to confirmation if potential duplicate detected?
