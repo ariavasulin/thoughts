@@ -79,11 +79,11 @@ export function formatDateShort(dateString: string | null | undefined): string {
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] TypeScript compiles without errors: `cd dws-app && npm run build`
-- [ ] Linting passes: `cd dws-app && npm run lint`
+- [x] TypeScript compiles without errors: `cd dws-app && npm run build`
+- [x] Linting passes: `cd dws-app && npm run lint` (pre-existing lint errors in other files)
 
 #### Manual Verification:
-- [ ] N/A for this phase (utility function only)
+- [x] N/A for this phase (utility function only)
 
 ---
 
@@ -193,17 +193,17 @@ function StatusBadge({ status }: { status: Receipt["status"] }) {
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] TypeScript compiles without errors: `cd dws-app && npm run build`
-- [ ] Linting passes: `cd dws-app && npm run lint`
+- [x] TypeScript compiles without errors: `cd dws-app && npm run build`
+- [x] Linting passes: `cd dws-app && npm run lint` (pre-existing lint errors in other files)
 
 #### Manual Verification:
-- [ ] Table fits on 320px viewport without horizontal scroll
-- [ ] Table fits on 375px viewport without horizontal scroll
-- [ ] Date shows as "12/18" format on mobile, "Dec 18, 2024" on desktop
-- [ ] Photo column shows icon only on mobile, "View" + icon on desktop
-- [ ] "No photo" shows as "—" on mobile
-- [ ] Actions column header is visually empty (sr-only text for accessibility)
-- [ ] Table still looks good on desktop
+- [x] Table fits on 320px viewport without horizontal scroll
+- [x] Table fits on 375px viewport without horizontal scroll
+- [x] Date shows as "12/18" format on mobile, "Dec 18, 2024" on desktop
+- [x] Photo column shows icon only on mobile, "View" + icon on desktop
+- [x] "No photo" shows as "—" on mobile
+- [x] Actions column header is visually empty (sr-only text for accessibility)
+- [x] Table still looks good on desktop
 
 **Implementation Note**: After completing this phase and all automated verification passes, pause here for manual confirmation from the human that the manual testing was successful before proceeding to the next phase.
 
@@ -292,8 +292,8 @@ import {
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] TypeScript compiles without errors: `cd dws-app && npm run build`
-- [ ] Linting passes: `cd dws-app && npm run lint`
+- [x] TypeScript compiles without errors: `cd dws-app && npm run build`
+- [x] Linting passes: `cd dws-app && npm run lint` (pre-existing lint errors in other files)
 
 #### Manual Verification:
 - [ ] On mobile (<768px): Edit button opens Drawer sliding up from bottom
@@ -309,7 +309,7 @@ import {
 ## Phase 4: Use Drawer for Upload Confirmation on Mobile
 
 ### Overview
-Replace the Dialog with Drawer on mobile for the receipt upload confirmation modal.
+Replace the Dialog with Drawer on mobile for the receipt details fallback modal. Note: Since the auto-submit feature was added, this Dialog only appears when OCR couldn't extract all fields or a potential duplicate is detected. Most uploads auto-submit and show a toast with an "Edit" button instead.
 
 ### Changes Required:
 
@@ -327,17 +327,28 @@ import {
   DrawerTitle,
 } from "@/components/ui/drawer"
 
-// Replace the Dialog section (lines 344-353) with:
+// Replace the Dialog section (lines 453-474) with:
 {/* Receipt Details - Drawer on mobile, Dialog on desktop */}
 {isMobile ? (
   <Drawer open={showDetailsCard} onOpenChange={setShowDetailsCard}>
     <DrawerContent className="bg-[#2e2e2e] border-[#4e4e4e]">
-      <DrawerTitle className="sr-only">Confirm Receipt Details</DrawerTitle>
+      <DrawerTitle className="sr-only">
+        {extractedData?.id ? 'Edit Receipt Details' : 'Confirm Receipt Details'}
+      </DrawerTitle>
       <div className="px-4 pb-4">
         <ReceiptDetailsCard
           onSubmit={handleDetailsSubmit}
           onCancel={handleCancel}
           initialData={extractedData}
+          mode={extractedData?.id ? 'edit' : 'create'}
+          receiptId={extractedData?.id as string | undefined}
+          onEditSuccess={(updatedReceipt) => {
+            if (onReceiptAdded) {
+              onReceiptAdded(updatedReceipt)
+            }
+            setShowDetailsCard(false)
+            setExtractedData({})
+          }}
         />
       </div>
     </DrawerContent>
@@ -349,8 +360,19 @@ import {
         onSubmit={handleDetailsSubmit}
         onCancel={handleCancel}
         initialData={extractedData}
+        mode={extractedData?.id ? 'edit' : 'create'}
+        receiptId={extractedData?.id as string | undefined}
+        onEditSuccess={(updatedReceipt) => {
+          if (onReceiptAdded) {
+            onReceiptAdded(updatedReceipt)
+          }
+          setShowDetailsCard(false)
+          setExtractedData({})
+        }}
       />
-      <DialogTitle className="sr-only">Confirm Receipt Details</DialogTitle>
+      <DialogTitle className="sr-only">
+        {extractedData?.id ? 'Edit Receipt Details' : 'Confirm Receipt Details'}
+      </DialogTitle>
     </DialogContent>
   </Dialog>
 )}
@@ -363,11 +385,13 @@ import {
 - [ ] Linting passes: `cd dws-app && npm run lint`
 
 #### Manual Verification:
-- [ ] On mobile: After taking photo/uploading receipt, Drawer slides up from bottom
+- [ ] On mobile (fallback case - missing fields): After taking photo where OCR can't extract all fields, Drawer slides up from bottom
+- [ ] On mobile (fallback case - duplicate): When duplicate detected, Drawer slides up with warning
+- [ ] On mobile (edit via toast): After auto-submit, tap "Edit" in toast → Drawer opens in edit mode
 - [ ] OCR-extracted data populates correctly in Drawer form
 - [ ] Can submit receipt from Drawer
 - [ ] Can cancel/dismiss by swiping down
-- [ ] On desktop: Dialog still works as before
+- [ ] On desktop: Dialog still works as before (both fallback and edit-via-toast scenarios)
 
 **Implementation Note**: After completing this phase and all automated verification passes, pause here for manual confirmation from the human that the manual testing was successful before proceeding to the next phase.
 
@@ -386,7 +410,8 @@ import {
 **Desktop Testing (≥768px viewport):**
 1. Verify table displays normally with full date format and "View" text
 2. Verify edit modal opens as centered Dialog
-3. Verify upload confirmation opens as centered Dialog
+3. Verify auto-submit shows toast with "Edit" button (for clear receipts)
+4. Verify fallback Dialog opens when OCR can't extract all fields
 
 **Mobile Testing (320px viewport - iPhone SE):**
 1. Open employee page
@@ -394,14 +419,16 @@ import {
 3. Verify dates show in short format (M/D)
 4. Verify Photo column shows icon only
 5. Verify Actions header is empty
-6. Tap edit icon - verify Drawer slides up from bottom
+6. Tap edit icon on pending receipt - verify Drawer slides up from bottom
 7. Test editing a receipt via Drawer
-8. Tap "Take Photo" button and select image
-9. Verify upload confirmation appears as Drawer
-10. Submit receipt via Drawer
+8. Tap "Take Photo" button and select clear receipt image
+9. Verify auto-submit: toast appears with "Edit" button (if all fields extracted)
+10. Tap "Edit" in toast - verify Drawer opens in edit mode
+11. Test fallback: upload blurry/partial receipt image
+12. Verify fallback Drawer appears when OCR can't extract all fields
 
 **Mobile Testing (375px viewport - iPhone 12/13/14):**
-1. Repeat steps 1-10
+1. Repeat steps 1-12
 2. Verify comfortable spacing (table should have more breathing room)
 
 **Tablet Testing (768px viewport):**
