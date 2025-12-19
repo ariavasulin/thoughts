@@ -296,11 +296,11 @@ import {
 - [x] Linting passes: `cd dws-app && npm run lint` (pre-existing lint errors in other files)
 
 #### Manual Verification:
-- [ ] On mobile (<768px): Edit button opens Drawer sliding up from bottom
-- [ ] Drawer has drag handle at top
-- [ ] Can swipe down to dismiss Drawer
-- [ ] Edit form works correctly inside Drawer
-- [ ] On desktop (≥768px): Edit button opens centered Dialog (unchanged behavior)
+- [x] On mobile (<768px): Edit button opens Drawer sliding up from bottom
+- [x] Drawer has drag handle at top
+- [x] Can swipe down to dismiss Drawer
+- [x] Edit form works correctly inside Drawer
+- [x] On desktop (≥768px): Edit button opens centered Dialog (unchanged behavior)
 
 **Implementation Note**: After completing this phase and all automated verification passes, pause here for manual confirmation from the human that the manual testing was successful before proceeding to the next phase.
 
@@ -381,8 +381,8 @@ import {
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] TypeScript compiles without errors: `cd dws-app && npm run build`
-- [ ] Linting passes: `cd dws-app && npm run lint`
+- [x] TypeScript compiles without errors: `cd dws-app && npm run build`
+- [x] Linting passes: `cd dws-app && npm run lint`
 
 #### Manual Verification:
 - [ ] On mobile (fallback case - missing fields): After taking photo where OCR can't extract all fields, Drawer slides up from bottom
