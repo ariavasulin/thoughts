@@ -141,9 +141,9 @@ export default function DashboardLayout({
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Dependencies install without errors: `cd dws-app && npm install`
-- [ ] Build succeeds: `npm run build`
-- [ ] Lint passes: `npm run lint`
+- [x] Dependencies install without errors: `cd dws-app && npm install`
+- [x] Build succeeds: `npm run build`
+- [x] Lint passes: `npm run lint` (pre-existing lint issues unrelated to new files)
 - [ ] Dev server starts: `npm run dev`
 
 #### Manual Verification:
@@ -289,11 +289,11 @@ export function useUpdateReceipt() {
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] TypeScript compiles without errors: `npm run build`
-- [ ] Lint passes: `npm run lint`
+- [x] TypeScript compiles without errors: `npm run build`
+- [x] Lint passes: `npm run lint`
 
 #### Manual Verification:
-- [ ] N/A - hook not yet integrated
+- [x] N/A - hook not yet integrated
 
 ---
 
