@@ -144,12 +144,12 @@ export default function DashboardLayout({
 - [x] Dependencies install without errors: `cd dws-app && npm install`
 - [x] Build succeeds: `npm run build`
 - [x] Lint passes: `npm run lint` (pre-existing lint issues unrelated to new files)
-- [ ] Dev server starts: `npm run dev`
+- [x] Dev server starts: `npm run dev`
 
 #### Manual Verification:
-- [ ] Dashboard page loads without errors
-- [ ] React Query Devtools icon appears in bottom-left corner (dev mode only)
-- [ ] No console errors related to QueryClient
+- [x] Dashboard page loads without errors
+- [x] React Query Devtools icon appears in bottom-left corner (dev mode only)
+- [x] No console errors related to QueryClient
 
 ---
 
@@ -390,19 +390,19 @@ Replace `window.location.reload()` with `refetch()`:
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] TypeScript compiles without errors: `npm run build`
-- [ ] Lint passes: `npm run lint`
-- [ ] Dev server runs without errors: `npm run dev`
+- [x] TypeScript compiles without errors: `npm run build`
+- [x] Lint passes: `npm run lint`
+- [x] Dev server runs without errors: `npm run dev`
 
 #### Manual Verification:
-- [ ] Dashboard loads and displays receipts
-- [ ] Switching tabs is instant (no loading spinner after first load)
-- [ ] Date range filter works correctly
-- [ ] Search filter works correctly (client-side filtering should still work)
-- [ ] Editing a receipt shows changes immediately
-- [ ] Deleting a receipt removes it immediately
-- [ ] Refresh button fetches fresh data
-- [ ] Page refresh fetches fresh data (not from cache)
+- [x] Dashboard loads and displays receipts
+- [x] Switching tabs is instant (no loading spinner after first load)
+- [x] Date range filter works correctly
+- [x] Search filter works correctly (client-side filtering should still work)
+- [x] Editing a receipt shows changes immediately
+- [x] Deleting a receipt removes it immediately
+- [x] Refresh button fetches fresh data
+- [x] Page refresh fetches fresh data (not from cache)
 
 **Implementation Note**: After completing this phase and all automated verification passes, pause here for manual confirmation from the human that the manual testing was successful before proceeding to the next phase.
 
@@ -438,11 +438,11 @@ CREATE INDEX IF NOT EXISTS idx_receipts_status_date ON receipts(status, receipt_
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Migration applies successfully via Supabase
+- [x] Migration applies successfully via Supabase
 
 #### Manual Verification:
-- [ ] Initial page load feels faster
-- [ ] Switching to filtered tabs (Pending, Approved, etc.) is responsive
+- [x] Initial page load feels faster
+- [x] Switching to filtered tabs (Pending, Approved, etc.) is responsive
 
 ---
 
@@ -464,13 +464,13 @@ Clean up any unused imports from the refactoring.
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] No `window.location.reload()` calls remain for data refresh purposes
-- [ ] Build succeeds: `npm run build`
-- [ ] Lint passes: `npm run lint`
+- [x] No `window.location.reload()` calls remain for data refresh purposes
+- [x] Build succeeds: `npm run build`
+- [x] Lint passes: `npm run lint`
 
 #### Manual Verification:
-- [ ] All user flows work correctly
-- [ ] No regressions in existing functionality
+- [x] All user flows work correctly
+- [x] No regressions in existing functionality
 
 ---
 
