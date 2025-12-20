@@ -127,8 +127,8 @@ export interface Receipt {
 
 #### Automated Verification:
 - [ ] Migration applies cleanly: `npx supabase db push` (or via dashboard)
-- [ ] TypeScript types compile: `cd dws-app && npm run build`
-- [ ] No linting errors: `cd dws-app && npm run lint`
+- [x] TypeScript types compile: `cd dws-app && npm run build`
+- [ ] No linting errors: `cd dws-app && npm run lint` (pre-existing lint errors, not related to changes)
 
 #### Manual Verification:
 - [ ] Can add email address to user profile via Supabase dashboard
@@ -205,9 +205,9 @@ export function getInboxId(): string {
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] Package installs: `cd dws-app && npm install`
-- [ ] Build succeeds: `cd dws-app && npm run build`
-- [ ] AgentMail types available in IDE
+- [x] Package installs: `cd dws-app && npm install`
+- [x] Build succeeds: `cd dws-app && npm run build`
+- [x] AgentMail types available in IDE
 
 #### Manual Verification:
 - [ ] AgentMail console shows inbox created
@@ -669,8 +669,8 @@ export function createSupabaseAdminClient() {
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] TypeScript compiles: `cd dws-app && npm run build`
-- [ ] No linting errors: `cd dws-app && npm run lint`
+- [x] TypeScript compiles: `cd dws-app && npm run build`
+- [ ] No linting errors: `cd dws-app && npm run lint` (pre-existing lint errors, not related to changes)
 - [ ] Endpoint exists: `curl -X POST http://localhost:3000/api/agent/email-webhook` returns error (not 404)
 
 #### Manual Verification:
