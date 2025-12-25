@@ -116,11 +116,11 @@ export const TIMELINE_DEPT_COLORS: Record<string, string> = {
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] TypeScript compiles without errors: `cd millflow && npm run build`
-- [ ] Linting passes: `cd millflow && npm run lint`
+- [x] TypeScript compiles without errors: `cd millflow && npm run build`
+- [x] Linting passes: `cd millflow && npm run lint`
 
 #### Manual Verification:
-- [ ] N/A for this phase (no visual changes yet)
+- [x] N/A for this phase (no visual changes yet)
 
 ---
 
@@ -165,10 +165,10 @@ Add the new phase properties to existing sheet objects. Not all sheets need all 
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] TypeScript compiles without errors: `cd millflow && npm run build`
+- [x] TypeScript compiles without errors: `cd millflow && npm run build`
 
 #### Manual Verification:
-- [ ] N/A for this phase (view not updated yet)
+- [x] N/A for this phase (view not updated yet)
 
 ---
 
@@ -226,8 +226,8 @@ const dateRange = useMemo(() => {
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] TypeScript compiles without errors: `cd millflow && npm run build`
-- [ ] Linting passes: `cd millflow && npm run lint`
+- [x] TypeScript compiles without errors: `cd millflow && npm run build`
+- [x] Linting passes: `cd millflow && npm run lint`
 
 #### Manual Verification:
 - [ ] Dev server runs: `cd millflow && npm run dev`
