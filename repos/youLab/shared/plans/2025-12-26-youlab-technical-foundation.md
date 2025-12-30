@@ -68,137 +68,117 @@ A working system where:
 
 ## Phase 1: LettaStarter HTTP Service
 
+> **Detailed Implementation Plan**: See `thoughts/shared/plans/2025-12-29-phase-1-http-service.md` for complete implementation details, code snippets, and sub-phases.
+
 ### Overview
 Convert LettaStarter from a library to an HTTP service. The Pipe will call this service rather than importing LettaStarter directly. This keeps the Pipe thin and all logic server-side.
 
-### Open Questions to Resolve Before Implementation
-- **API Framework**: FastAPI (recommended) or Flask?
-- **Port/host configuration**: Environment variables?
-- **Authentication**: API key between Pipe and service, or trust localhost?
+### Decisions Made (2025-12-29)
 
-### Changes Required
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| API Framework | FastAPI | Modern, async, Pydantic integration |
+| Port | 8100 | Separate from Letta (8283) |
+| Authentication | Trust localhost | Simpler for pilot, API key designed for later |
+| Agent Creation | Explicit `POST /agents` | Clear lifecycle, supports multiple agent types |
+| Agent Naming | `youlab_{user_id}_{agent_type}` | Discoverable, supports multiple types per user |
+| Entry Point | `uv run letta-server` | Separate from CLI |
+| Chat Title | Query from OpenWebUI's Chats model | Confirmed available via `Chats.get_chat_by_id()` |
 
-#### 1. Create HTTP Service Entry Point
-**File**: `src/letta_starter/server.py` (new)
+### Core Endpoints
 
-Core endpoints:
 ```
+POST /agents
+  Body: { user_id, agent_type?, user_name? }
+  Returns: { agent_id, user_id, agent_type, agent_name }
+
+GET /agents?user_id=X
+  Returns: { agents: [...] }
+
 POST /chat
-  Body: { user_id, message, chat_id, chat_title? }
+  Body: { agent_id, message, chat_id?, chat_title? }
   Returns: { response, agent_id }
 
 GET /health
-  Returns: { status, letta_connected, honcho_connected }
-
-GET /student/{user_id}/status
-  Returns: { agent_exists, current_context, progress }
-
-POST /admin/reload-curriculum
-  Triggers curriculum reload
-
-POST /background/run
-  Body: { user_id? }
-  Triggers background processing
+  Returns: { status, letta_connected, version }
 ```
 
-#### 2. Add Dependencies
-**File**: `pyproject.toml`
+### Key Components
 
-Add FastAPI, uvicorn to dependencies.
-
-#### 3. Update CLI
-**File**: `src/letta_starter/main.py`
-
-Add `--serve` mode that starts HTTP server instead of interactive CLI.
+1. **Agent Template System** (`agents/templates.py`) - Pydantic-based templates for different agent types
+2. **Agent Manager** (`server/agents.py`) - Handles Letta operations with in-memory cache
+3. **Thin Pipe** (`pipelines/letta_pipe.py`) - Extracts user/chat context, forwards to service
+4. **Langfuse Tracing** (`server/tracing.py`) - Observability integration
 
 ### Success Criteria
 
-#### Automated Verification
-- [ ] `uv run letta-starter --serve` starts HTTP server
-- [ ] `curl localhost:8000/health` returns 200 with status
-- [ ] `uv run pytest tests/test_server.py` passes
-- [ ] `uv run ruff check src/` passes
-- [ ] `uv run mypy src/` passes
-
-#### Manual Verification
-- [ ] Can POST to /chat endpoint and receive response
-- [ ] Server logs show structured output
-- [ ] Server survives Letta being temporarily unavailable
+See detailed plan for complete success criteria per sub-phase.
 
 ---
 
 ## Phase 2: User Identity & Agent Routing
 
+> **Note**: Most of this phase is now handled by Phase 1. Phase 2 focuses on remaining identity concerns.
+
 ### Overview
-Update the Pipe to extract user identity from OpenWebUI and route to per-student Letta agents. Create agents on first interaction.
+Phase 1 now handles:
+- User ID extraction (`__user__["id"]`)
+- Chat ID extraction (`__metadata__["chat_id"]`)
+- Agent creation (explicit `POST /agents` endpoint)
+- Agent lookup and caching
 
-### Open Questions to Resolve Before Implementation
-- **Agent naming convention**: `student_{user_id}` or `youlab_{user_id}`?
-- **What to do if agent creation fails**: Retry? Fallback? Error to user?
+**Phase 2 focuses on**:
+- First-interaction detection and onboarding trigger
+- Memory block schema for course-specific data
+- Integration hooks for Phases 3-7
 
-### Changes Required
+### Decisions Made (from Phase 1)
 
-#### 1. Update Pipe to Extract User Info
-**File**: `src/letta_starter/pipelines/letta_pipe.py`
+| Decision | Choice |
+|----------|--------|
+| Agent naming | `youlab_{user_id}_{agent_type}` |
+| Agent creation | Explicit endpoint, Pipe calls it if agent doesn't exist |
+| User ID source | `__user__["id"]` from OpenWebUI |
+| Chat ID source | `__metadata__["chat_id"]` from OpenWebUI |
 
-Update `pipe()` signature to accept special arguments:
+### Remaining Work
+
+#### 1. First-Interaction Detection
+**File**: `src/letta_starter/server/main.py`
+
+In `/chat` endpoint, detect if this is user's first message:
 ```python
-def pipe(
-    self,
-    body: dict,
-    __user__: dict = None,
-    __metadata__: dict = None,
-) -> str:
-    user_id = __user__["id"]
-    chat_id = __metadata__.get("chat_id")
-    # Forward to LettaStarter service
+# Check if agent was just created (no prior messages)
+if is_first_interaction(agent_id):
+    # Trigger onboarding context (Phase 7)
+    pass
 ```
 
-#### 2. Implement Agent Registry in Service
-**File**: `src/letta_starter/server.py`
+#### 2. Memory Block Schema for Course Data
 
-- On `/chat` request, look up or create agent for user_id
-- Cache agent_id → user_id mapping
-- Create new agent with initial memory blocks if first interaction
+The existing `PersonaBlock` and `HumanBlock` in `blocks.py` are generic. For YouLab, we may need:
 
-#### 3. Define Initial Memory Block Templates
-**File**: `src/letta_starter/memory/templates.py` (new)
-
-Templates for new student agents:
-- Initial persona (course tutor identity)
-- Initial human block (empty student profile)
-
-### Open Questions: Memory Block Schema
-
-**To be finalized before implementation:**
-
-PersonaBlock fields:
+**Extended HumanBlock fields** (to add in Phase 4/5):
 ```
-[IDENTITY] - Agent name and role
-[CAPABILITIES] - What the agent can do
-[STYLE] - Communication style (may be updated by Honcho)
+[PROGRESS] - Module/lesson completion status
+[STRENGTHS] - Clifton strengths (when available)
+[HONCHO_INSIGHTS] - Insights from dialectic (Phase 6)
+```
+
+**Extended PersonaBlock fields** (to add in Phase 4/5):
+```
 [MODULE] - Current module context
 [LESSON] - Current lesson context
 [OBJECTIVE] - Current lesson objective
 ```
 
-HumanBlock fields:
-```
-[USER] - Student name and basic info
-[PROGRESS] - Module/lesson completion status
-[STRENGTHS] - Clifton strengths (when available)
-[TASK] - Current task/activity
-[CONTEXT] - Recent context notes
-[HONCHO_INSIGHTS] - Insights from dialectic (updated by background process)
-```
+**Decision**: Extend blocks when needed in later phases, not upfront.
 
 ### Success Criteria
 
 #### Automated Verification
-- [ ] Pipe correctly extracts `__user__["id"]` and `__metadata__["chat_id"]`
-- [ ] Service creates new agent on first request from user
-- [ ] Service reuses existing agent on subsequent requests
-- [ ] `uv run pytest tests/test_routing.py` passes
+- [ ] Phase 1 tests pass (agent creation, routing)
+- [ ] First-interaction detection works
 
 #### Manual Verification
 - [ ] Two different OpenWebUI users get different Letta agents
@@ -301,6 +281,14 @@ Add `honcho-ai` to dependencies.
 
 ### Overview
 Parse OpenWebUI chat titles to determine module/lesson context. Update Letta memory blocks accordingly. Handle the "student went back to old chat" scenario.
+
+### Decisions Made (from Phase 1)
+
+| Decision | Choice |
+|----------|--------|
+| Chat title access | `Chats.get_chat_by_id(chat_id).title` from OpenWebUI models |
+| Title passed to service | Yes, via `chat_title` field in `/chat` request |
+| Temporary chats | IDs starting with `local:` are skipped (not in database) |
 
 ### Open Questions to Resolve Before Implementation
 - **Chat title format**: `Module 1 / Lesson 2` or `M1L2` or freeform?
@@ -656,40 +644,62 @@ Phase 2: User Identity & Routing (depends on Phase 1)
 
 ## Open Questions Summary
 
-These must be resolved before or during implementation:
+### Resolved (2025-12-29)
 
-### Architecture
-- [ ] API framework choice (FastAPI recommended)
-- [ ] Inter-service authentication (API key vs localhost trust)
+| Question | Resolution |
+|----------|------------|
+| API framework | FastAPI |
+| Inter-service auth | Trust localhost (API key designed for later) |
+| Agent naming | `youlab_{user_id}_{agent_type}` |
+| Agent creation | Explicit `POST /agents` endpoint |
+| Chat title access | `Chats.get_chat_by_id()` in Pipe |
+| PersonaBlock schema | Use existing fields: name, role, capabilities, tone, verbosity, constraints, expertise |
+| HumanBlock schema | Use existing fields, extend as needed in later phases |
+| Service port | 8100 |
+| Entry point | `uv run letta-server` |
 
-### Memory Blocks
-- [ ] Exact PersonaBlock schema fields
-- [ ] Exact HumanBlock schema fields
-- [ ] Size limits per block
+### Still Open
 
-### Curriculum
+#### Memory Blocks
+- [ ] Size limits per block (default 1500 chars seems reasonable)
+- [ ] Course-specific extensions to blocks (defer to Phase 4/5)
+
+#### Curriculum
 - [ ] Final markdown format specification
 - [ ] Trigger expression syntax
 - [ ] Completion criteria evaluation method
 - [ ] Memory block reference resolution
 
-### Onboarding
+#### Onboarding
 - [ ] Initial data collection requirements
 - [ ] Clifton StrengthsFinder integration method
 - [ ] Group/facilitator assignment process
 
-### Background Processing
+#### Background Processing
 - [ ] Idle timeout duration
 - [ ] Specific dialectic queries
 - [ ] Progress/completion detection logic
+
+#### Thread Context (Phase 4)
+- [ ] Chat title format: `Module 1 / Lesson 2` or `M1L2` or freeform?
+- [ ] Fallback when title doesn't match pattern
 
 ---
 
 ## References
 
+### Internal Documents
 - Project context: `thoughts/shared/youlab-project-context.md`
+- **Phase 1 detailed plan**: `thoughts/shared/plans/2025-12-29-phase-1-http-service.md`
+- Current Pipe: `src/letta_starter/pipelines/letta_pipe.py`
+- Current memory blocks: `src/letta_starter/memory/blocks.py`
+
+### OpenWebUI (cloned to `/OpenWebUI/`)
+- Chats model: `OpenWebUI/open-webui/backend/open_webui/models/chats.py`
+- Pipe interface: `OpenWebUI/open-webui/backend/open_webui/functions.py`
+- User model: `OpenWebUI/open-webui/backend/open_webui/models/users.py`
+
+### External Documentation
 - OpenWebUI Pipes: https://docs.openwebui.com/features/plugin/functions/pipe/
 - Honcho docs: https://docs.honcho.dev
 - Letta docs: https://docs.letta.com
-- Current Pipe: `src/letta_starter/pipelines/letta_pipe.py`
-- Current memory blocks: `src/letta_starter/memory/blocks.py`
