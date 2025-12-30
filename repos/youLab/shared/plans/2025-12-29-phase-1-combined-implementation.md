@@ -129,7 +129,7 @@ templates = AgentTemplateRegistry()
 ```
 
 #### Success Criteria
-- [ ] `pytest tests/test_templates.py -v` — All 20 tests pass
+- [x] `pytest tests/test_templates.py -v` — All 20 tests pass
 
 ---
 
