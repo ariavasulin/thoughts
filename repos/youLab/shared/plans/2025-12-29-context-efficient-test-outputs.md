@@ -98,10 +98,10 @@ run_silent_with_test_count "Tests" "uv run pytest $PYTEST_AGENT_FLAGS $EXTRA_ARG
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Script exists and is executable: `test -x hack/test-agent.sh`
-- [ ] Script runs without error: `./hack/test-agent.sh`
-- [ ] Success output is minimal (single line with checkmark)
-- [ ] Lint passes: `make lint`
+- [x] Script exists and is executable: `test -x hack/test-agent.sh`
+- [x] Script runs without error: `./hack/test-agent.sh`
+- [x] Success output is minimal (single line with checkmark)
+- [ ] Lint passes: `make lint` (pre-existing lint issues in tests/)
 
 #### Manual Verification:
 - [ ] Introduce a failing test, verify failure output shows only relevant info
@@ -135,9 +135,9 @@ test-agent:
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `make test-agent` runs successfully
-- [ ] `make help` shows test-agent option
-- [ ] Lint passes: `make lint`
+- [x] `make test-agent` runs successfully
+- [x] `make help` shows test-agent option
+- [ ] Lint passes: `make lint` (pre-existing lint issues in tests/)
 
 #### Manual Verification:
 - [ ] Confirm `make test-agent` output is minimal on success
@@ -223,8 +223,8 @@ make test-agent                  # Pytest (agent-optimized, minimal output)
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] CLAUDE.md updated with new command
-- [ ] Lint passes: `make lint`
+- [x] CLAUDE.md updated with new command
+- [ ] Lint passes: `make lint` (pre-existing lint issues in tests/)
 
 #### Manual Verification:
 - [ ] Review CLAUDE.md reads clearly for agents

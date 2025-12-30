@@ -321,7 +321,7 @@ class AgentManager:
 ```
 
 #### Success Criteria
-- [ ] `pytest tests/test_server/test_agents.py -v` — All 18 tests pass
+- [x] `pytest tests/test_server/test_agents.py -v` — All 18 tests pass
 
 ---
 
@@ -531,7 +531,7 @@ async def chat(request: ChatRequest):
 ```
 
 #### Success Criteria
-- [ ] `pytest tests/test_server/test_endpoints.py -v` — All 16 tests pass
+- [x] `pytest tests/test_server/test_endpoints.py -v` — All 16 tests pass
 
 ---
 
@@ -567,7 +567,7 @@ if __name__ == "__main__":
 ```
 
 #### Success Criteria
-- [ ] `uv run letta-server` starts without error
+- [x] `uv run letta-server` starts without error
 
 ---
 
