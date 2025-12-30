@@ -98,9 +98,9 @@ if (status !== undefined) {
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Build passes: `cd dws-app && npm run build`
-- [ ] Lint passes: `cd dws-app && npm run lint`
-- [ ] Type checking passes (implicit in build)
+- [x] Build passes: `cd dws-app && npm run build`
+- [x] Lint passes: `cd dws-app && npm run lint` (pre-existing lint warnings unrelated to changes)
+- [x] Type checking passes (implicit in build)
 
 #### Manual Verification:
 - [ ] API accepts status parameter and updates database correctly
