@@ -2,216 +2,99 @@
 
 ## Overview
 
-Implement full streaming with thinking indicators from OpenWebUI through LettaStarter HTTP Service to Letta agents. This eliminates the current 10-30 second wait for responses by streaming content in real-time and showing "thinking" indicators when the agent is reasoning.
+Implement streaming responses with thinking indicators from OpenWebUI through LettaStarter HTTP Service to Letta agents. Students will see real-time "Thinking..." indicators and incremental response text instead of 10-30 second waits.
 
-## Current State Analysis
+## Current State
 
-### What Exists Now
-
-1. **HTTP Service** (`server/main.py:149-204`):
-   - `/chat` endpoint is synchronous
-   - Calls `manager.send_message()` which blocks until complete response
-   - Returns full `ChatResponse` with all text
-
-2. **AgentManager** (`server/agents.py`):
-   - Uses sync `Letta` client (not `AsyncLetta`)
-   - `send_message()` uses `client.send_message()` (non-streaming)
-   - All methods except `rebuild_cache()` are synchronous
-
-3. **Pipe** (`pipelines/letta_pipe.py:121-188`):
-   - **BUG**: Incorrect method signature - uses `user_message, model_id, messages` parameters that OpenWebUI doesn't inject
-   - Sync `def pipe()` method
-   - Uses `httpx.Client` (sync)
-   - Returns full string response
-
-### Critical Findings from Verification
-
-| Component | Issue | Impact |
-|-----------|-------|--------|
-| **Letta SDK** | Sync `Stream` class doesn't support `async for` - must use `AsyncLetta` with `AsyncStream` | Must refactor AgentManager to use async client |
-| **Pipe Signature** | Current signature is **wrong** - OpenWebUI only injects `body`, `__user__`, `__metadata__`, `__event_emitter__` | Existing pipe may be broken or working by accident |
-| **AgentManager** | Uses sync `Letta` client throughout | Cannot simply add async method - need async client |
-
-### Letta SDK Architecture (Verified)
-
-```
-Sync Path (CANNOT use with async for):
-  Letta → AgentsResource → MessagesResource.stream() → Stream[T]
-
-Async Path (REQUIRED for FastAPI streaming):
-  AsyncLetta → AsyncAgentsResource → AsyncMessagesResource.stream() → AsyncStream[T]
-```
-
-**Key imports**:
-```python
-from letta_client import AsyncLetta  # Async client
-from letta_client import Letta       # Sync client (current)
-```
-
-### OpenWebUI Pipe Signature (Verified)
-
-**Correct signature** (from `OpenWebUI/open-webui/backend/open_webui/functions.py:206-209`):
-```python
-async def pipe(
-    self,
-    body: dict,                    # Contains messages, model, etc.
-    __user__: dict | None = None,
-    __metadata__: dict | None = None,
-    __event_emitter__: Callable[[dict], Awaitable[None]] | None = None,
-) -> str
-```
-
-**Current WRONG signature** in `letta_pipe.py:121`:
-```python
-def pipe(self, user_message: str, model_id: str, messages: list, body: dict, ...)
-```
+1. **HTTP Service** (`server/main.py:149-204`): Sync `/chat` endpoint returns full response
+2. **AgentManager** (`server/agents.py:158-165`): Sync `send_message()` using sync `Letta` client
+3. **Pipe** (`pipelines/letta_pipe.py:121-188`): **BUG** - wrong method signature, sync, returns full string
 
 ## Desired End State
 
-### Architecture Flow
 ```
-Browser ← SSE ← OpenWebUI ← event_emitter ← Pipe ← SSE ← HTTP Service ← AsyncStream ← Letta
+Browser ← SSE ← OpenWebUI ← event_emitter ← Pipe ← SSE ← HTTP Service ← Stream ← Letta
 ```
 
-### User Experience
 - Student sends message
-- Sees "Thinking..." indicator immediately (from `ReasoningMessage`)
-- Sees tool usage indicators (from `ToolCallMessage`)
-- Response streams incrementally (from `AssistantMessage`)
+- "Thinking..." indicator appears immediately
+- Response streams incrementally
 - No long waits
 
-### Success Criteria
-- [ ] Streaming endpoint works with curl: `curl -N http://localhost:8100/chat/stream`
-- [ ] Pipe streams to OpenWebUI event emitter
-- [ ] "Thinking" indicators appear in UI
-- [ ] Response text streams incrementally
-- [ ] Existing `/chat` endpoint still works (backwards compatible)
+## Key Design Decision: Sync Streaming
+
+We're using **sync streaming** throughout the server:
+- Existing codebase is sync
+- Uvicorn handles ~40 concurrent streaming requests (plenty for early stage)
+- No need for `AsyncLetta` - simpler architecture
+- FastAPI's `StreamingResponse` accepts sync iterators
+
+**Note**: The Pipe must be async because OpenWebUI's `__event_emitter__` is async. This is an OpenWebUI requirement, not a complexity we're adding.
 
 ## What We're NOT Doing
 
-- Token-level streaming (message-level is sufficient for MVP)
-- Reconnection logic (simple error handling is fine)
-- Converting ALL AgentManager methods to async (only add streaming)
-- Unit tests for streaming (integration test manually)
-- Full async refactor of AgentManager (keep sync methods for backwards compat)
-
-## Implementation Approach
-
-We'll implement in 5 phases:
-1. Add dependencies
-2. Add async Letta client support to AgentManager
-3. Add streaming endpoint to HTTP service
-4. Fix and convert Pipe to async with event emitter
-5. Test end-to-end
-
-Each phase is independently testable.
+- Token-level streaming (message-level is fine)
+- `AsyncLetta` client (unnecessary complexity)
+- Converting existing sync methods to async
+- Unit tests for streaming (manual integration testing)
 
 ---
 
-## Phase 1: Add Dependencies
+## Phase 1: Add Dependency
 
 ### Overview
-Add `httpx-sse` dependency for Pipe SSE consumption.
+Add `httpx-sse` for Pipe SSE consumption.
 
-### Changes Required
+### Changes
 
-#### 1. Add Dependency
 **File**: `pyproject.toml`
-**Changes**: Add `httpx-sse` to dependencies
 
-```python
-# Add after "httpx>=0.27.0"
-"httpx-sse>=0.4.0",
+```toml
+dependencies = [
+    # ... existing ...
+    "httpx-sse>=0.4.0",
+]
 ```
 
 ### Success Criteria
-
-#### Automated Verification:
-- [ ] Dependency installs: `uv sync`
-- [ ] Linting passes: `make lint-fix`
+- [ ] `uv sync` completes
+- [ ] `make lint-fix` passes
 
 ---
 
-## Phase 2: Add Async Client Support to AgentManager
+## Phase 2: Add Streaming to AgentManager
 
 ### Overview
-Add `AsyncLetta` client and async streaming method to AgentManager while preserving existing sync methods for backwards compatibility.
+Add sync `stream_message()` method that yields SSE-formatted events.
 
-### Changes Required
+### Changes
 
-#### 1. Add Async Client Property
 **File**: `src/letta_starter/server/agents.py`
-**Changes**: Add async client alongside existing sync client
 
+Add imports at top:
 ```python
-from collections.abc import AsyncGenerator
 import json
-from typing import Any
-
-import structlog
-from letta_client import AsyncLetta, Letta
-
-from letta_starter.agents.templates import templates
-
-log = structlog.get_logger()
-
-
-class AgentManager:
-    """Manages Letta agents for YouLab users."""
-
-    def __init__(self, letta_base_url: str) -> None:
-        self.letta_base_url = letta_base_url
-        self._client: Letta | None = None
-        self._async_client: AsyncLetta | None = None
-        # Cache: (user_id, agent_type) -> agent_id
-        self._cache: dict[tuple[str, str], str] = {}
-
-    @property
-    def client(self) -> Letta:
-        """Lazy-initialize sync Letta client."""
-        if self._client is None:
-            self._client = Letta(base_url=self.letta_base_url)
-        return self._client
-
-    @client.setter
-    def client(self, value: Letta) -> None:
-        """Set the Letta client (for testing)."""
-        self._client = value
-
-    @property
-    def async_client(self) -> AsyncLetta:
-        """Lazy-initialize async Letta client."""
-        if self._async_client is None:
-            self._async_client = AsyncLetta(base_url=self.letta_base_url)
-        return self._async_client
-
-    @async_client.setter
-    def async_client(self, value: AsyncLetta) -> None:
-        """Set the async Letta client (for testing)."""
-        self._async_client = value
+from collections.abc import Iterator
 ```
 
-#### 2. Add Streaming Method
-**File**: `src/letta_starter/server/agents.py`
-**Changes**: Add after existing `send_message()` method
-
+Add method after `send_message()`:
 ```python
-async def stream_message(
+def stream_message(
     self,
     agent_id: str,
     message: str,
     enable_thinking: bool = True,
-) -> AsyncGenerator[str, None]:
+) -> Iterator[str]:
     """Stream a message to an agent. Yields SSE-formatted events."""
     try:
-        async with self.async_client.agents.messages.stream(
+        with self.client.agents.messages.stream(
             agent_id=agent_id,
             input=message,
             enable_thinking="true" if enable_thinking else "false",
             stream_tokens=False,
             include_pings=True,
         ) as stream:
-            async for chunk in stream:
+            for chunk in stream:
                 event = self._chunk_to_sse_event(chunk)
                 if event:
                     yield event
@@ -224,7 +107,8 @@ def _chunk_to_sse_event(self, chunk: Any) -> str | None:
     msg_type = getattr(chunk, "message_type", None)
 
     if msg_type == "reasoning_message":
-        return f"data: {json.dumps({'type': 'status', 'content': 'Thinking...', 'reasoning': getattr(chunk, 'reasoning', '')})}\n\n"
+        reasoning = getattr(chunk, "reasoning", "")
+        return f"data: {json.dumps({'type': 'status', 'content': 'Thinking...', 'reasoning': reasoning})}\n\n"
 
     elif msg_type == "tool_call_message":
         tool_call = getattr(chunk, "tool_call", None)
@@ -244,31 +128,28 @@ def _chunk_to_sse_event(self, chunk: Any) -> str | None:
         return ": keepalive\n\n"
 
     elif msg_type == "error_message":
-        return f"data: {json.dumps({'type': 'error', 'message': getattr(chunk, 'message', 'Unknown error')})}\n\n"
+        error_msg = getattr(chunk, "message", "Unknown error")
+        return f"data: {json.dumps({'type': 'error', 'message': error_msg})}\n\n"
 
     return None
 ```
 
 ### Success Criteria
-
-#### Automated Verification:
-- [ ] Linting passes: `make lint-fix`
-- [ ] Type checking passes: `make check-agent`
-- [ ] Tests pass: `make test-agent`
+- [ ] `make lint-fix` passes
+- [ ] `make check-agent` passes
 
 ---
 
-## Phase 3: Add Streaming Schemas and Endpoint
+## Phase 3: Add Streaming Endpoint
 
 ### Overview
-Add `/chat/stream` endpoint that returns `StreamingResponse` with SSE.
+Add `/chat/stream` endpoint returning `StreamingResponse`.
 
-### Changes Required
+### Changes
 
-#### 1. Add Streaming Schema
 **File**: `src/letta_starter/server/schemas.py`
-**Changes**: Add after `ChatRequest` class
 
+Add after `ChatRequest`:
 ```python
 class StreamChatRequest(BaseModel):
     """Request to send a message with streaming response."""
@@ -280,16 +161,14 @@ class StreamChatRequest(BaseModel):
     enable_thinking: bool = Field(default=True, description="Include reasoning in stream")
 ```
 
-#### 2. Add Streaming Endpoint
 **File**: `src/letta_starter/server/main.py`
-**Changes**: Add imports and endpoint after existing `/chat` endpoint
 
-Add to imports:
+Add import:
 ```python
 from fastapi.responses import StreamingResponse
 
 from letta_starter.server.schemas import (
-    # ... existing imports ...
+    # ... existing ...
     StreamChatRequest,
 )
 ```
@@ -309,17 +188,12 @@ async def chat_stream(request: StreamChatRequest) -> StreamingResponse:
             detail=f"Agent not found: {request.agent_id}",
         )
 
-    async def event_generator() -> AsyncIterator[str]:
-        """Generate SSE events from agent stream."""
-        async for event in manager.stream_message(
+    return StreamingResponse(
+        manager.stream_message(
             agent_id=request.agent_id,
             message=request.message,
             enable_thinking=request.enable_thinking,
-        ):
-            yield event
-
-    return StreamingResponse(
-        event_generator(),
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -331,52 +205,61 @@ async def chat_stream(request: StreamChatRequest) -> StreamingResponse:
 
 ### Success Criteria
 
-#### Automated Verification:
-- [ ] Linting passes: `make lint-fix`
-- [ ] Type checking passes: `make check-agent`
-- [ ] Server starts: `uv run letta-server &`
+#### Automated:
+- [ ] `make lint-fix` passes
+- [ ] `make check-agent` passes
 
-#### Manual Verification:
-- [ ] Test with curl (requires Letta server running):
-  ```bash
-  # Terminal 1: letta server
-  # Terminal 2: uv run letta-server
-  # Terminal 3:
-  curl -X POST http://localhost:8100/agents \
-    -H "Content-Type: application/json" \
-    -d '{"user_id": "test-user", "agent_type": "tutor"}'
-  # Note the agent_id, then:
-  curl -N -X POST http://localhost:8100/chat/stream \
-    -H "Content-Type: application/json" \
-    -d '{"agent_id": "<agent_id>", "message": "Hello!", "enable_thinking": true}'
-  ```
-- [ ] Verify SSE events stream with format: `data: {...}\n\n`
-- [ ] Verify "Thinking..." status events appear
-- [ ] Verify message content streams
+#### Manual:
+```bash
+# Terminal 1
+letta server
 
-**Implementation Note**: Pause here for manual confirmation that the streaming endpoint works with curl before proceeding to Phase 4.
+# Terminal 2
+uv run letta-server
+
+# Terminal 3 - create agent
+curl -X POST http://localhost:8100/agents \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": "test-user", "agent_type": "tutor"}'
+
+# Note the agent_id, then test streaming
+curl -N -X POST http://localhost:8100/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{"agent_id": "<agent_id>", "message": "Hello!"}'
+```
+
+Expected output:
+```
+data: {"type": "status", "content": "Thinking...", "reasoning": "..."}
+
+data: {"type": "message", "content": "Hello! I'm your tutor..."}
+
+data: {"type": "done"}
+```
+
+**Pause here** for manual verification before Phase 4.
 
 ---
 
-## Phase 4: Fix and Convert Pipe to Async Streaming
+## Phase 4: Fix and Update Pipe
 
 ### Overview
-Fix the incorrect pipe signature and convert to async with `__event_emitter__` for streaming.
+Fix incorrect pipe signature and add streaming support.
 
-**Note**: This is also a bug fix - the current pipe signature is incorrect and may not work properly with all OpenWebUI versions.
+**Bug being fixed**: Current signature uses `user_message, model_id, messages` parameters that OpenWebUI doesn't inject. Correct signature uses `body` containing messages.
 
-### Changes Required
+**Why async**: OpenWebUI's `__event_emitter__` is an async function, so `pipe()` must be async to call it. This is an OpenWebUI requirement.
 
-#### 1. Complete Pipe Rewrite
+### Changes
+
 **File**: `src/letta_starter/pipelines/letta_pipe.py`
-**Changes**: Replace entire file
 
+Replace entire file:
 ```python
 """
 OpenWebUI Pipeline for YouLab.
 
-This Pipe forwards requests to the LettaStarter HTTP service with streaming support.
-It extracts user context from OpenWebUI and chat title from the database.
+Forwards requests to the LettaStarter HTTP service with streaming support.
 """
 
 import json
@@ -389,12 +272,7 @@ from pydantic import BaseModel, Field
 
 
 class Pipeline:
-    """
-    OpenWebUI Pipeline for YouLab tutoring with streaming.
-
-    Forwards messages to the LettaStarter HTTP service and streams responses.
-    Configure using Valves in the OpenWebUI admin panel.
-    """
+    """OpenWebUI Pipeline for YouLab tutoring with streaming."""
 
     class Valves(BaseModel):
         """Configuration options exposed in OpenWebUI admin."""
@@ -405,7 +283,7 @@ class Pipeline:
         )
         AGENT_TYPE: str = Field(
             default="tutor",
-            description="Agent type to use (tutor, etc.)",
+            description="Agent type to use",
         )
         ENABLE_LOGGING: bool = Field(
             default=True,
@@ -413,26 +291,22 @@ class Pipeline:
         )
         ENABLE_THINKING: bool = Field(
             default=True,
-            description="Show thinking indicators in UI",
+            description="Show thinking indicators",
         )
 
     def __init__(self) -> None:
-        """Initialize the pipeline."""
         self.name = "YouLab Tutor"
         self.valves = self.Valves()
 
     async def on_startup(self) -> None:
-        """Called when the pipeline starts."""
         if self.valves.ENABLE_LOGGING:
-            print(f"YouLab Pipeline started. Service URL: {self.valves.LETTA_SERVICE_URL}")
+            print(f"YouLab Pipeline started. Service: {self.valves.LETTA_SERVICE_URL}")
 
     async def on_shutdown(self) -> None:
-        """Called when the pipeline stops."""
         if self.valves.ENABLE_LOGGING:
             print("YouLab Pipeline stopped")
 
     async def on_valves_updated(self) -> None:
-        """Called when valves are updated via the UI."""
         if self.valves.ENABLE_LOGGING:
             print("YouLab Pipeline valves updated")
 
@@ -440,10 +314,8 @@ class Pipeline:
         """Get chat title from OpenWebUI database."""
         if not chat_id or chat_id.startswith("local:"):
             return None
-
         try:
             from open_webui.models.chats import Chats
-
             chat = Chats.get_chat_by_id(chat_id)
             return chat.title if chat else None
         except ImportError:
@@ -459,20 +331,19 @@ class Pipeline:
         user_id: str,
         user_name: str | None = None,
     ) -> str | None:
-        """Ensure agent exists for user, create if needed. Returns agent_id."""
+        """Ensure agent exists for user, create if needed."""
         try:
             response = await client.get(
                 f"{self.valves.LETTA_SERVICE_URL}/agents",
                 params={"user_id": user_id},
             )
             if response.status_code == 200:
-                agents = response.json().get("agents", [])
-                for agent in agents:
+                for agent in response.json().get("agents", []):
                     if agent.get("agent_type") == self.valves.AGENT_TYPE:
                         return agent.get("agent_id")
         except Exception as e:
             if self.valves.ENABLE_LOGGING:
-                print(f"Failed to check existing agents: {e}")
+                print(f"Failed to check agents: {e}")
 
         # Create new agent
         try:
@@ -488,11 +359,10 @@ class Pipeline:
                 return response.json().get("agent_id")
             if self.valves.ENABLE_LOGGING:
                 print(f"Failed to create agent: {response.text}")
-            return None
         except Exception as e:
             if self.valves.ENABLE_LOGGING:
                 print(f"Failed to create agent: {e}")
-            return None
+        return None
 
     async def pipe(
         self,
@@ -501,20 +371,8 @@ class Pipeline:
         __metadata__: dict[str, Any] | None = None,
         __event_emitter__: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
     ) -> str:
-        """
-        Process a message through the YouLab tutor with streaming.
-
-        Args:
-            body: Request body containing messages, model, etc.
-            __user__: User information from OpenWebUI
-            __metadata__: Request metadata (chat_id, message_id, etc.)
-            __event_emitter__: Async callback for streaming events to UI
-
-        Returns:
-            Empty string (content is streamed via event_emitter)
-
-        """
-        # Extract user message from body
+        """Process a message with streaming."""
+        # Extract message from body
         messages = body.get("messages", [])
         user_message = messages[-1].get("content", "") if messages else ""
 
@@ -533,26 +391,25 @@ class Pipeline:
                 })
             return ""
 
-        # Extract chat context from metadata
+        # Get chat context
         chat_id = __metadata__.get("chat_id") if __metadata__ else None
         chat_title = self._get_chat_title(chat_id)
 
         if self.valves.ENABLE_LOGGING:
-            print(f"YouLab: user={user_id}, chat={chat_id}, title={chat_title}")
+            print(f"YouLab: user={user_id}, chat={chat_id}")
 
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
-                # Ensure agent exists
                 agent_id = await self._ensure_agent_exists(client, user_id, user_name)
                 if not agent_id:
                     if __event_emitter__:
                         await __event_emitter__({
                             "type": "message",
-                            "data": {"content": "Error: Could not create or find your tutor agent."}
+                            "data": {"content": "Error: Could not find or create tutor agent."}
                         })
                     return ""
 
-                # Stream response from HTTP service
+                # Stream from HTTP service
                 async with aconnect_sse(
                     client,
                     "POST",
@@ -573,13 +430,13 @@ class Pipeline:
             if __event_emitter__:
                 await __event_emitter__({
                     "type": "message",
-                    "data": {"content": "Error: Request timed out. Please try again."}
+                    "data": {"content": "Error: Request timed out."}
                 })
         except httpx.ConnectError:
             if __event_emitter__:
                 await __event_emitter__({
                     "type": "message",
-                    "data": {"content": "Error: Could not connect to tutor service. Please try again later."}
+                    "data": {"content": "Error: Could not connect to tutor service."}
                 })
         except Exception as e:
             if self.valves.ENABLE_LOGGING:
@@ -595,10 +452,10 @@ class Pipeline:
     async def _handle_sse_event(
         self,
         data: str,
-        event_emitter: Callable[[dict[str, Any]], Awaitable[None]] | None,
+        emitter: Callable[[dict[str, Any]], Awaitable[None]] | None,
     ) -> None:
-        """Handle an SSE event from the HTTP service."""
-        if not event_emitter:
+        """Handle SSE event from HTTP service."""
+        if not emitter:
             return
 
         try:
@@ -606,168 +463,80 @@ class Pipeline:
             event_type = event.get("type")
 
             if event_type == "status":
-                # Show status indicator (thinking, tool use)
-                await event_emitter({
+                await emitter({
                     "type": "status",
                     "data": {
                         "description": event.get("content", "Processing..."),
                         "done": False,
                     }
                 })
-
             elif event_type == "message":
-                # Stream message content
-                await event_emitter({
+                await emitter({
                     "type": "message",
                     "data": {"content": event.get("content", "")}
                 })
-
             elif event_type == "done":
-                # Mark complete
-                await event_emitter({
+                await emitter({
                     "type": "status",
                     "data": {"description": "Complete", "done": True}
                 })
-
             elif event_type == "error":
-                await event_emitter({
+                await emitter({
                     "type": "message",
-                    "data": {"content": f"Error: {event.get('message', 'Unknown error')}"}
+                    "data": {"content": f"Error: {event.get('message', 'Unknown')}"}
                 })
 
         except json.JSONDecodeError:
             if self.valves.ENABLE_LOGGING:
-                print(f"Failed to parse SSE event: {data}")
-
-
-# For standalone testing
-if __name__ == "__main__":
-    import asyncio
-
-    async def mock_emitter(event: dict[str, Any]) -> None:
-        print(f"Event: {event}")
-
-    async def test() -> None:
-        pipeline = Pipeline()
-        await pipeline.on_startup()
-
-        # Simulate OpenWebUI request
-        await pipeline.pipe(
-            body={
-                "messages": [{"role": "user", "content": "Hello! What can you help me with?"}],
-                "model": "youlab",
-            },
-            __user__={"id": "test-user-123", "name": "Test User"},
-            __metadata__={"chat_id": "local:test"},
-            __event_emitter__=mock_emitter,
-        )
-
-        await pipeline.on_shutdown()
-
-    asyncio.run(test())
+                print(f"Failed to parse SSE: {data}")
 ```
 
 ### Success Criteria
 
-#### Automated Verification:
-- [ ] Linting passes: `make lint-fix`
-- [ ] Type checking passes: `make check-agent`
+#### Automated:
+- [ ] `make lint-fix` passes
+- [ ] `make check-agent` passes
 
-#### Manual Verification:
-- [ ] Upload updated Pipe to OpenWebUI (Admin > Functions > Pipes)
-- [ ] Restart OpenWebUI (Pipes have no hot reload)
-- [ ] Test chat in OpenWebUI
-- [ ] Verify "Thinking..." indicator appears during processing
-- [ ] Verify response streams incrementally (not all at once)
-- [ ] Verify errors are displayed properly
-
-**Implementation Note**: Pause here for manual confirmation that end-to-end streaming works in OpenWebUI.
+#### Manual:
+- [ ] Upload Pipe to OpenWebUI (Admin > Functions > Pipes)
+- [ ] Restart OpenWebUI (no hot reload for Pipes)
+- [ ] Send message in chat
+- [ ] Verify "Thinking..." indicator appears
+- [ ] Verify response streams incrementally
 
 ---
 
 ## Phase 5: End-to-End Testing
 
-### Overview
-Comprehensive testing of the full streaming pipeline.
+### Test Checklist
 
-### Test Scenarios
-
-#### 1. Basic Streaming Flow
-```bash
-# Start all services
-letta server                    # Terminal 1
-uv run letta-server            # Terminal 2
-
-# Test HTTP service streaming
-curl -N -X POST http://localhost:8100/chat/stream \
-  -H "Content-Type: application/json" \
-  -d '{"agent_id": "<id>", "message": "Explain what you can help me with"}'
-```
-
-Expected output:
-```
-data: {"type": "status", "content": "Thinking...", "reasoning": "..."}
-
-data: {"type": "message", "content": "I'm your college essay tutor..."}
-
-data: {"type": "done"}
-
-```
-
-#### 2. OpenWebUI Integration
-1. Log in to OpenWebUI
-2. Select YouLab Tutor pipe
-3. Send message: "Help me brainstorm essay topics"
-4. Observe:
-   - "Thinking..." status appears immediately
-   - Response text streams incrementally
-   - Final status shows "Complete"
-
-#### 3. Error Handling
-- Test with invalid agent_id → should show error message
-- Test with Letta server down → should show connection error
-- Test with very long response → should stream without timeout
-
-### Success Criteria
-
-#### All Must Pass:
-- [ ] Streaming works end-to-end in curl
+- [ ] Streaming works with curl
 - [ ] Streaming works in OpenWebUI
-- [ ] Thinking indicators visible in UI
+- [ ] Thinking indicators visible
 - [ ] Errors handled gracefully
-- [ ] Existing `/chat` endpoint still works (backwards compat)
-- [ ] No regressions in agent creation
+- [ ] Original `/chat` endpoint still works
+- [ ] Agent creation still works
+
+### Error Scenarios to Test
+
+1. Invalid agent_id → error message
+2. Letta server down → connection error
+3. Long response → streams without timeout
 
 ---
 
-## Performance Considerations
+## Summary
 
-- **Keepalive**: SSE pings (`message_type: "ping"`) prevent connection timeout
-- **Buffering**: `X-Accel-Buffering: no` header prevents nginx buffering
-- **Timeout**: 120 second timeout for long agent responses
-- **Memory**: Streaming avoids loading full response into memory
-- **Connection pooling**: `AsyncClient` should be reused where possible
-
-## Migration Notes
-
-- Existing `/chat` endpoint preserved for backwards compatibility
-- Sync `AgentManager.send_message()` preserved for existing callers
-- Pipe signature fix may affect any custom integrations using old signature
-- No database changes required
-
-## Risk Mitigation
-
-| Risk | Mitigation |
-|------|------------|
-| Letta SDK async API differs from documented | Verified against actual SDK source code |
-| OpenWebUI event format changes | Verified against OpenWebUI source in local clone |
-| httpx-sse incompatibility | Library is stable, well-maintained |
-| Existing tests break | Keeping sync methods, only adding async |
+| Phase | What | Files |
+|-------|------|-------|
+| 1 | Add `httpx-sse` dependency | `pyproject.toml` |
+| 2 | Add `stream_message()` method | `server/agents.py` |
+| 3 | Add `/chat/stream` endpoint | `server/schemas.py`, `server/main.py` |
+| 4 | Fix and update Pipe | `pipelines/letta_pipe.py` |
+| 5 | End-to-end testing | Manual |
 
 ## References
 
-- Research: `thoughts/shared/research/2025-12-31-phase-2-streaming-research.md`
-- Handoff: `thoughts/shared/handoffs/general/2025-12-31_15-11-36_phase-2-streaming-research.md`
-- Letta SDK AsyncStream: `.venv/lib/python3.12/site-packages/letta_client/_streaming.py:103-183`
+- Letta SDK Stream: `.venv/lib/python3.12/site-packages/letta_client/_streaming.py:21-101`
 - OpenWebUI Pipe signature: `OpenWebUI/open-webui/backend/open_webui/functions.py:206-209`
 - OpenWebUI event emitter: `OpenWebUI/open-webui/backend/open_webui/socket/main.py:693-810`
