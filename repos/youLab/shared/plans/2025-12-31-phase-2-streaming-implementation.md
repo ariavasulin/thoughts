@@ -7,8 +7,8 @@ Implement streaming responses with thinking indicators from OpenWebUI through Le
 ## Current State
 
 1. **HTTP Service** (`server/main.py:149-204`): Sync `/chat` endpoint returns full response
-2. **AgentManager** (`server/agents.py:158-165`): Sync `send_message()` using sync `Letta` client
-3. **Pipe** (`pipelines/letta_pipe.py:121-188`): **BUG** - wrong method signature, sync, returns full string
+2. **AgentManager** (`server/agents.py:158-165`): Sync `send_message()` using `self.client.send_message()` - **NOTE**: This uses an undocumented wrapper; the `letta_client` SDK's actual API is `client.agents.messages.create()`
+3. **Pipe** (`pipelines/letta_pipe.py:121-188`): **BUG** - wrong method signature (`user_message, model_id, messages, body` instead of just `body`), sync, returns full string
 
 ## Desired End State
 
@@ -52,9 +52,11 @@ Add `httpx-sse` for Pipe SSE consumption.
 ```toml
 dependencies = [
     # ... existing ...
-    "httpx-sse>=0.4.0",
+    "httpx-sse>=0.4.0,<0.5.0",  # Pin to 0.4.x for stability (library is beta)
 ]
 ```
+
+**Note**: httpx-sse is marked as beta software. Current version is 0.4.3 (as of Dec 2025). Pinning to `<0.5.0` prevents unexpected breaking changes.
 
 ### Success Criteria
 - [ ] `uv sync` completes
@@ -66,6 +68,8 @@ dependencies = [
 
 ### Overview
 Add sync `stream_message()` method that yields SSE-formatted events.
+
+**SDK Reference**: `client.agents.messages.stream()` is defined at `.venv/lib/python3.12/site-packages/letta_client/resources/agents/messages.py:691-795`
 
 ### Changes
 
@@ -85,8 +89,15 @@ def stream_message(
     message: str,
     enable_thinking: bool = True,
 ) -> Iterator[str]:
-    """Stream a message to an agent. Yields SSE-formatted events."""
+    """Stream a message to an agent. Yields SSE-formatted events.
+
+    Uses the Letta SDK's streaming API: client.agents.messages.stream()
+    """
     try:
+        # Note: enable_thinking is typed as `str | Omit` in the SDK.
+        # The docstring says "If set to True, enables reasoning" but the
+        # actual expected value format is unclear. Using string "true"/"false".
+        # If this doesn't work, try passing the boolean directly.
         with self.client.agents.messages.stream(
             agent_id=agent_id,
             input=message,
@@ -103,7 +114,22 @@ def stream_message(
         yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
 def _chunk_to_sse_event(self, chunk: Any) -> str | None:
-    """Convert Letta streaming chunk to SSE event string."""
+    """Convert Letta streaming chunk to SSE event string.
+
+    Handles these message types from LettaStreamingResponse:
+    - reasoning_message: Agent's internal thinking
+    - tool_call_message: Tool being invoked
+    - assistant_message: Final response text
+    - stop_reason: Stream complete
+    - ping: Keep-alive
+    - error_message: Error occurred
+
+    Ignores (returns None):
+    - tool_return_message: Tool execution results (internal)
+    - usage_statistics: Token counts (internal)
+    - hidden_reasoning_message: Hidden thinking (internal)
+    - system_message, user_message: Echo of input (internal)
+    """
     msg_type = getattr(chunk, "message_type", None)
 
     if msg_type == "reasoning_message":
@@ -116,6 +142,7 @@ def _chunk_to_sse_event(self, chunk: Any) -> str | None:
         return f"data: {json.dumps({'type': 'status', 'content': f'Using {tool_name}...'})}\n\n"
 
     elif msg_type == "assistant_message":
+        # Note: content can be Union[str, List[ContentPart]] per SDK
         content = getattr(chunk, "content", "")
         if not isinstance(content, str):
             content = str(content)
@@ -131,6 +158,8 @@ def _chunk_to_sse_event(self, chunk: Any) -> str | None:
         error_msg = getattr(chunk, "message", "Unknown error")
         return f"data: {json.dumps({'type': 'error', 'message': error_msg})}\n\n"
 
+    # Intentionally ignore: tool_return_message, usage_statistics,
+    # hidden_reasoning_message, system_message, user_message
     return None
 ```
 
@@ -246,9 +275,20 @@ data: {"type": "done"}
 ### Overview
 Fix incorrect pipe signature and add streaming support.
 
-**Bug being fixed**: Current signature uses `user_message, model_id, messages` parameters that OpenWebUI doesn't inject. Correct signature uses `body` containing messages.
+**Bug being fixed**: Current signature uses `user_message, model_id, messages, body` parameters. OpenWebUI only injects `body` as the primary data parameter (containing `messages`, `model`, etc.). The other parameters are NOT injected and will always be empty/default.
 
-**Why async**: OpenWebUI's `__event_emitter__` is an async function, so `pipe()` must be async to call it. This is an OpenWebUI requirement.
+**Correct signature** (per OpenWebUI docs):
+```python
+async def pipe(
+    self,
+    body: dict[str, Any],
+    __user__: dict[str, Any] | None = None,
+    __metadata__: dict[str, Any] | None = None,
+    __event_emitter__: Callable[[dict], Awaitable[None]] | None = None,
+) -> str:
+```
+
+**Why async**: OpenWebUI's `__event_emitter__` is an async function, so `pipe()` must be async to `await` it. This is an OpenWebUI requirement.
 
 ### Changes
 
@@ -537,6 +577,37 @@ class Pipeline:
 
 ## References
 
-- Letta SDK Stream: `.venv/lib/python3.12/site-packages/letta_client/_streaming.py:21-101`
-- OpenWebUI Pipe signature: `OpenWebUI/open-webui/backend/open_webui/functions.py:206-209`
-- OpenWebUI event emitter: `OpenWebUI/open-webui/backend/open_webui/socket/main.py:693-810`
+### Letta SDK (letta_client v1.6.2)
+- **Stream class**: `.venv/lib/python3.12/site-packages/letta_client/_streaming.py:21-101`
+- **messages.stream() method**: `.venv/lib/python3.12/site-packages/letta_client/resources/agents/messages.py:691-795`
+- **messages.create() method**: `.venv/lib/python3.12/site-packages/letta_client/resources/agents/messages.py:64-151` (non-streaming), `153-240` (streaming overload)
+- **LettaStreamingResponse types**: `.venv/lib/python3.12/site-packages/letta_client/types/agents/letta_streaming_response.py`
+
+### OpenWebUI (validated via web research + local reference docs)
+- Pipe signature reference: `thoughts/searchable/global/shared/reference/open-web-ui-pipes.md`
+- Official docs: https://docs.openwebui.com/features/plugin/functions/pipe/
+
+### httpx-sse (v0.4.0+)
+- GitHub: https://github.com/florimondmanca/httpx-sse
+- Key functions: `aconnect_sse()`, `EventSource.aiter_sse()`, `ServerSentEvent.data`
+
+### Research Documents
+- Streaming research: `thoughts/searchable/shared/research/2025-12-31-phase-2-streaming-research.md`
+- Consolidated reference: `thoughts/searchable/shared/research/2025-12-31-phase-2-consolidated-reference.md`
+
+---
+
+## Validation Notes
+
+**Validated**: 2025-12-31
+
+### What Was Verified
+- **Codebase line numbers**: All file:line references confirmed against actual source
+- **Letta SDK API**: `client.agents.messages.stream()` exists at messages.py:691-795
+- **OpenWebUI Pipe signature**: Correct signature is `async def pipe(self, body, __user__, __metadata__, __event_emitter__)`
+- **httpx-sse API**: `aconnect_sse()`, `aiter_sse()`, `.data` attribute all confirmed
+- **Message types**: All 6 handled types confirmed in `LettaStreamingResponse` union
+
+### Known Caveats
+1. **`enable_thinking` parameter**: SDK types it as `str | Omit` but docstring says "If set to True". Using string `"true"`/`"false"` - may need adjustment if Letta expects boolean.
+2. **Current `send_message()` API**: Existing code uses `self.client.send_message()` which doesn't exist in `letta_client` SDK. May be using undocumented wrapper from `letta` server package. The new streaming code uses correct SDK API.
