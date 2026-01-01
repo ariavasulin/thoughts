@@ -29,8 +29,9 @@ This project uses a comprehensive documentation and AI-assistant configuration s
 1. **CLAUDE.md** - Main project context file for Claude Code
 2. **.claude/ directory** - Claude Code settings, custom agents, and slash commands
 3. **thoughts/ directory** - Structured knowledge management via HumanLayer
-4. **Development configs** - Next.js 15, React 19, TypeScript, Tailwind CSS 4, shadcn/ui
-5. **Linear integration** - `.linear.toml` for project management
+4. **Docs/ directory** - User-facing documentation site using Docsify
+5. **Development configs** - Next.js 15, React 19, TypeScript, Tailwind CSS 4, shadcn/ui
+6. **Linear integration** - `.linear.toml` for project management
 
 ---
 
@@ -462,12 +463,24 @@ echo "Timestamp For Filename: $(date '+%Y-%m-%d_%H-%M-%S')"
 7. `vercel.json` - If deploying to Vercel
 8. `src/app/globals.css` - Copy Tailwind 4 theme setup
 
+### User Documentation (Docsify)
+1. `Docs/index.html` - Customize name, theme colors
+2. `Docs/_sidebar.md` - Update navigation structure
+3. `Docs/.nojekyll` - Copy as-is (empty file)
+4. `Docs/README.md` - Project homepage
+5. `Docs/*.md` - Create pages matching sidebar
+
 ### Directory Structure to Create
 ```
 project/
 ├── .claude/
 │   ├── agents/
 │   └── commands/
+├── Docs/                  # Docsify documentation site
+│   ├── index.html
+│   ├── _sidebar.md
+│   ├── .nojekyll
+│   └── screenshots/
 ├── hack/
 │   └── spec_metadata.sh
 ├── thoughts/
@@ -486,22 +499,186 @@ project/
 
 ---
 
+## Part 7: User-Facing Documentation (Docsify)
+
+### 7.1 Directory Structure
+
+```
+Docs/
+├── index.html         # Docsify entry point with config
+├── _sidebar.md        # Navigation sidebar
+├── .nojekyll          # Prevents GitHub Pages Jekyll processing
+├── README.md          # Homepage/landing page
+├── Architecture.md    # System overview
+├── Authentication.md  # Auth documentation
+├── Receipts.md        # Receipt workflow
+├── Database.md        # Supabase setup
+├── API.md             # REST endpoints
+├── Admin-Features.md  # Admin user guide
+├── Employee-Features.md # Employee user guide
+├── Components.md      # UI component library
+├── Configuration.md   # Environment setup
+├── screenshots/       # UI screenshots
+│   ├── admin-*.png
+│   └── mobile-*.png
+└── Archive/           # Historical docs
+```
+
+### 7.2 Docsify Configuration (index.html)
+
+```javascript
+window.$docsify = {
+  name: 'Project Name',
+  repo: '',
+  loadSidebar: true,
+  subMaxLevel: 3,
+  auto2top: true,
+  search: {
+    placeholder: 'Search docs...',
+    noData: 'No results',
+    depth: 3
+  },
+  copyCode: {
+    buttonText: 'Copy',
+    successText: 'Copied!'
+  },
+  pagination: {
+    crossChapter: true,
+    crossChapterText: true
+  },
+  // Wikilink support [[Page]] → [Page](Page.md)
+  plugins: [
+    function(hook) {
+      hook.beforeEach(function(content) {
+        content = content.replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, '[$2]($1.md)');
+        content = content.replace(/\[\[([^\]]+)\]\]/g, '[$1]($1.md)');
+        return content;
+      });
+    }
+  ]
+}
+```
+
+### 7.3 Theme: Gruvbox Dark Terminal
+
+Custom CSS using Gruvbox color palette with JetBrains Mono font:
+
+```css
+:root {
+  /* Gruvbox palette */
+  --gruvbox-bg-hard: #1d2021;
+  --gruvbox-bg: #282828;
+  --gruvbox-fg: #ebdbb2;
+
+  /* App accent color */
+  --dws-blue: #60a5fa;
+
+  /* Typography */
+  --base-font-family: 'JetBrains Mono', monospace;
+}
+```
+
+### 7.4 Plugins Used
+
+```html
+<!-- Core -->
+<script src="https://cdn.jsdelivr.net/npm/docsify@4/lib/docsify.min.js"></script>
+
+<!-- Plugins -->
+<script src="https://cdn.jsdelivr.net/npm/docsify@4/lib/plugins/search.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/docsify-copy-code@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/docsify-pagination@2/dist/docsify-pagination.min.js"></script>
+
+<!-- Syntax highlighting -->
+<script src="https://cdn.jsdelivr.net/npm/prismjs@1/components/prism-typescript.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/prismjs@1/components/prism-bash.min.js"></script>
+```
+
+### 7.5 Sidebar Structure (_sidebar.md)
+
+```markdown
+- **Getting Started**
+  - [Overview](README.md)
+  - [Architecture](Architecture.md)
+  - [Configuration](Configuration.md)
+
+- **Core Features**
+  - [Authentication](Authentication.md)
+  - [Receipts](Receipts.md)
+
+- **User Guides**
+  - [Employee Features](Employee-Features.md)
+  - [Admin Features](Admin-Features.md)
+
+- **Reference**
+  - [API](API.md)
+  - [Database](Database.md)
+  - [Components](Components.md)
+```
+
+### 7.6 Page Template Pattern
+
+```markdown
+# Page Title
+
+[[README|← Back to Index]]
+
+## Overview
+
+Brief description...
+
+## Key Concept 1
+
+| Column | Description |
+|--------|-------------|
+| Item 1 | Details |
+
+## Key Concept 2
+
+\`\`\`code
+example
+\`\`\`
+
+## Related Pages
+
+- [[OtherPage]] - Description
+- [[AnotherPage]] - Description
+```
+
+### 7.7 Wikilink Syntax
+
+Docsify is configured to support Obsidian-style wikilinks:
+- `[[PageName]]` → Links to PageName.md with "PageName" text
+- `[[PageName|Custom Text]]` → Links to PageName.md with "Custom Text"
+
+### 7.8 Hosting
+
+- **GitHub Pages**: Just push `Docs/` to repo, enable Pages on `/Docs` folder
+- `.nojekyll` file prevents Jekyll processing (required for `_sidebar.md`)
+
+---
+
 ## Key Patterns Summary
 
 1. **CLAUDE.md is concise** - ~50 lines, references detailed docs
 2. **Agents are specialists** - Each has one job, clear output format
 3. **Commands are workflows** - Multi-step processes with checkpoints
 4. **thoughts/ is structured** - Date prefixes, ticket references, clear categories
-5. **Tailwind 4 uses CSS** - No config file, @theme in globals.css
-6. **shadcn/ui new-york style** - Consistent component styling
-7. **Scripts in hack/** - Helper utilities, whitelisted in settings.json
-8. **Linear integration** - .linear.toml + custom CLI tools
+5. **Docs/ uses Docsify** - Gruvbox theme, wikilinks, search + copy code plugins
+6. **Tailwind 4 uses CSS** - No config file, @theme in globals.css
+7. **shadcn/ui new-york style** - Consistent component styling
+8. **Scripts in hack/** - Helper utilities, whitelisted in settings.json
+9. **Linear integration** - .linear.toml + custom CLI tools
 
 ## Code References
 
 - `.claude/settings.json` - Project Claude settings
 - `.claude/agents/codebase-locator.md` - Example agent definition
 - `.claude/commands/create_plan.md` - Example command definition
+- `Docs/index.html` - Docsify configuration with Gruvbox theme
+- `Docs/_sidebar.md` - Documentation navigation
+- `Docs/README.md` - Documentation homepage with changelog
+- `Docs/Architecture.md` - Example documentation page
 - `dws-app/package.json` - Dependencies and scripts
 - `dws-app/tsconfig.json` - TypeScript configuration
 - `dws-app/eslint.config.mjs` - ESLint flat config
