@@ -114,9 +114,9 @@ git diff --name-only "$LAST_DOCS_COMMIT"..HEAD -- 'src/' 'tests/' 2>/dev/null ||
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Script exists and is executable
-- [ ] `./hack/docs-diff.sh` runs without error
-- [ ] `./hack/docs-diff.sh --verbose` shows detailed output
+- [x] Script exists and is executable
+- [x] `./hack/docs-diff.sh` runs without error
+- [x] `./hack/docs-diff.sh --verbose` shows detailed output
 
 #### Manual Verification:
 - [ ] Compact output is parseable by agents
@@ -264,8 +264,8 @@ Review the report, then tell me which docs to update.
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Command file exists at `.claude/commands/verify_docs.md`
-- [ ] Command appears in available commands list
+- [x] Command file exists at `.claude/commands/verify_docs.md`
+- [x] Command appears in available commands list
 
 #### Manual Verification:
 - [ ] `/verify_docs` runs and produces a research document

@@ -148,11 +148,11 @@ const handleExport = () => {
 - [x] No TypeScript/ESLint errors: `npm run lint`
 
 #### Manual Verification:
-- [ ] Export button downloads a JSON file
-- [ ] Downloaded JSON has correct structure with `_annotation_after` fields
-- [ ] Last email in each thread has `_annotation_after: null`
-- [ ] `_metadata` block present with timestamp
-- [ ] Re-importing exported JSON restores annotations
+- [x] Export button downloads a JSON file
+- [x] Downloaded JSON has correct structure with `_annotation_after` fields
+- [x] Last email in each thread has `_annotation_after: null`
+- [x] `_metadata` block present with timestamp
+- [x] Re-importing exported JSON restores annotations
 
 **Implementation Note**: Test export, inspect the JSON, then re-import to verify round-trip works before proceeding.
 
@@ -219,8 +219,8 @@ Add to `tracewriter/.gitignore`:
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `npm install` succeeds with @vercel/kv added
-- [ ] Build succeeds: `npm run build`
+- [x] `npm install` succeeds with @vercel/kv added
+- [x] Build succeeds: `npm run build`
 
 #### Manual Verification:
 - [ ] Vercel project created and linked to repo
