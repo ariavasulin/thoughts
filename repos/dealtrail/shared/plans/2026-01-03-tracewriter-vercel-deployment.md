@@ -144,8 +144,8 @@ const handleExport = () => {
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Build succeeds: `cd tracewriter && npm run build`
-- [ ] No TypeScript/ESLint errors: `npm run lint`
+- [x] Build succeeds: `cd tracewriter && npm run build`
+- [x] No TypeScript/ESLint errors: `npm run lint`
 
 #### Manual Verification:
 - [ ] Export button downloads a JSON file
