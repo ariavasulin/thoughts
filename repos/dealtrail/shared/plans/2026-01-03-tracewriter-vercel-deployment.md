@@ -223,9 +223,9 @@ Add to `tracewriter/.gitignore`:
 - [x] Build succeeds: `npm run build`
 
 #### Manual Verification:
-- [ ] Vercel project created and linked to repo
-- [ ] KV database created in Vercel dashboard
-- [ ] Environment variables visible in Vercel project settings
+- [x] Vercel project created and linked to repo
+- [x] KV database created in Vercel dashboard
+- [x] Environment variables visible in Vercel project settings
 
 **Implementation Note**: Complete Vercel dashboard setup before proceeding to Phase 3.
 
@@ -317,8 +317,8 @@ export default defineConfig({
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Build succeeds: `npm run build`
-- [ ] API file has no syntax errors
+- [x] Build succeeds: `npm run build`
+- [x] API file has no syntax errors
 
 #### Manual Verification:
 - [ ] Deploy to Vercel preview
