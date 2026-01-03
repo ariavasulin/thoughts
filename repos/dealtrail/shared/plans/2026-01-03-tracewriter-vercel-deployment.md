@@ -321,10 +321,10 @@ export default defineConfig({
 - [x] API file has no syntax errors
 
 #### Manual Verification:
-- [ ] Deploy to Vercel preview
-- [ ] `GET /api/state` returns `{ properties: [], annotations: {} }`
-- [ ] `POST /api/state` with body saves and returns success
-- [ ] `GET /api/state` after POST returns saved data
+- [x] Deploy to Vercel preview
+- [x] `GET /api/state` returns `{ properties: [], annotations: {} }`
+- [x] `POST /api/state` with body saves and returns success
+- [x] `GET /api/state` after POST returns saved data
 
 **Implementation Note**: Test the API endpoints in Vercel preview deployment before proceeding to frontend integration.
 
@@ -513,7 +513,7 @@ const [saveStatus, setSaveStatus] = useState('');
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Build succeeds: `npm run build`
+- [x] Build succeeds: `npm run build`
 - [ ] No console errors on load
 
 #### Manual Verification:
