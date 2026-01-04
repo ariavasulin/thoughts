@@ -514,15 +514,15 @@ const [saveStatus, setSaveStatus] = useState('');
 
 #### Automated Verification:
 - [x] Build succeeds: `npm run build`
-- [ ] No console errors on load
+- [x] No console errors on load
 
 #### Manual Verification:
-- [ ] Open app → loads any existing state from KV
-- [ ] Import JSON → state saved to KV (check console logs)
-- [ ] Add annotation → auto-saves after 2s (check console logs)
-- [ ] Refresh page → annotations persist
-- [ ] Open in different browser/incognito → see same annotations
-- [ ] Import prompt warns about overwriting (if annotations exist)
+- [x] Open app → loads any existing state from KV
+- [x] Import JSON → state saved to KV (check console logs)
+- [x] Add annotation → auto-saves after 2s (check console logs)
+- [x] Refresh page → annotations persist
+- [x] Open in different browser/incognito → see same annotations
+- [x] Import prompt warns about overwriting (if annotations exist)
 
 **Implementation Note**: Test the full flow: import → annotate → refresh → verify. Then test in a different browser to confirm shared state works.
 
@@ -549,14 +549,14 @@ Deploy to Vercel production and verify team collaboration works.
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Vercel build succeeds
-- [ ] No build errors in Vercel dashboard
+- [x] Vercel build succeeds
+- [x] No build errors in Vercel dashboard
 
 #### Manual Verification:
-- [ ] Production URL loads the app
-- [ ] Import JSON works
-- [ ] Annotations save (wait 2s, refresh)
-- [ ] Export downloads correct JSON
+- [x] Production URL loads the app
+- [x] Import JSON works
+- [x] Annotations save (wait 2s, refresh)
+- [x] Export downloads correct JSON
 - [ ] Different team member can access and see annotations
 - [ ] Different team member's annotations appear after refresh
 
