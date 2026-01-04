@@ -4,14 +4,14 @@ researcher: ariasulin
 git_commit: 29783e20ce6d230469eee40148d80b068d2fd021
 branch: main
 repository: YouLab
-topic: "Simple Team Deployment Options for YouLab"
-tags: [research, deployment, infrastructure, docker, team-access]
+topic: "Cloud Deployment Options for YouLab"
+tags: [research, deployment, infrastructure, docker, railway, cloud]
 status: complete
 last_updated: 2026-01-04
 last_updated_by: ariasulin
 ---
 
-# Research: Simple Team Deployment Options for YouLab
+# Research: Cloud Deployment Options for YouLab
 
 **Date**: 2026-01-04T17:07:29+07:00
 **Researcher**: ariasulin
@@ -21,281 +21,270 @@ last_updated_by: ariasulin
 
 ## Research Question
 
-How to deploy YouLab for a team of 4 to test/use the full-stack while:
-- Easily committing and making changes
-- Testing changes (potentially on a test branch)
-- Not interfering with ongoing development
+How to deploy YouLab to the cloud for:
+- Team of 4 to test/use the full-stack
+- Easy development iteration (commit, test, deploy)
+- Authentication via OpenWebUI (disable new account creation)
+- Persistent Letta agent memory (non-negotiable)
+- Foundation for eventual production launch
 
 ## Summary
 
-YouLab currently has **no cloud deployment infrastructure** - this is intentional for the pilot phase. The application runs as a 4-service stack: OpenWebUI (port 3000), Ollama (port 11434), Letta Server (port 8283), and HTTP Service (port 8100). All services are designed for localhost with a "trust localhost" security model.
+YouLab requires **3 services** for cloud deployment (not 4 - Ollama is not needed):
 
-For simple team deployment, there are three practical paths:
-1. **Shared development server** with tunnel access (simplest, recommended)
-2. **Unified Docker Compose** with all services (moderate complexity)
-3. **Cloud deployment** to Railway/Fly.io/Render (highest complexity)
+| Service | Purpose | Persistence | Notes |
+|---------|---------|-------------|-------|
+| OpenWebUI | Chat UI + auth | Volume for SQLite | Has Railway one-click template |
+| Letta Server | Agent memory | **Volume required** | PostgreSQL at `/var/lib/postgresql/data` |
+| HTTP Service | API bridge | Stateless | Needs Dockerfile (doesn't exist yet) |
+
+**Key finding**: Ollama is NOT used in the YouLab flow. The pipeline goes `OpenWebUI → HTTP Service → Letta → OpenAI/Claude API` directly.
+
+**Recommended platform**: Railway - has one-click OpenWebUI template, supports persistent volumes, simple multi-service projects
 
 ## Detailed Findings
 
-### Current Architecture
+### Actual Data Flow (Ollama Not Used)
 
-The full YouLab stack consists of 4 services:
+The YouLab pipeline bypasses Ollama entirely:
 
 ```
-Browser → OpenWebUI:3000 → HTTP Service:8100 → Letta:8283 → Claude API
+Browser → OpenWebUI:3000 → HTTP Service:8100 → Letta:8283 → OpenAI/Claude API
 ```
 
-| Service | Container/Process | Port | Data Persistence |
-|---------|-------------------|------|------------------|
-| OpenWebUI | Docker: `open-webui` | 3000 | Volume: `open-webui:/app/backend/data` |
-| Ollama | Docker: `ollama` | 11434 | Volume: `ollama:/root/.ollama` |
-| Letta Server | Docker: `letta` | 8283 | Volume: `letta-data:/root/.letta` |
-| HTTP Service | Host process | 8100 | None (stateless, delegates to Letta) |
+**Evidence** (from codebase analysis):
+- `src/letta_starter/server/agents.py:110` - Agents hardcoded to `model="openai/gpt-4o-mini"`
+- `src/letta_starter/pipelines/letta_pipe.py` - Pipe connects directly to HTTP Service, no Ollama reference
+- Ollama only appears in docker-compose for OpenWebUI's built-in model support (unused by YouLab)
 
-**Source**: `docs/Quickstart.md:15-21`
+### Services Required for Cloud Deployment
 
-### Docker Configurations
+| Service | Image | Port | Persistence | Railway Support |
+|---------|-------|------|-------------|-----------------|
+| OpenWebUI | `ghcr.io/open-webui/open-webui:main` | 8080 | `/app/backend/data` | One-click template |
+| Letta Server | `letta/letta:latest` | 8283 | `/var/lib/postgresql/data` | Docker image |
+| HTTP Service | Custom Dockerfile needed | 8100 | None | Dockerfile |
 
-**OpenWebUI docker-compose.yaml** (`OpenWebUI/open-webui/docker-compose.yaml`):
-- Runs OpenWebUI + Ollama together
-- OpenWebUI builds from local Dockerfile or pulls `ghcr.io/open-webui/open-webui:main`
-- Uses `host.docker.internal:host-gateway` for container-to-host networking
+### Letta Persistence Details
 
-**Letta Server** - runs as standalone container:
+From [Letta Docker documentation](https://docs.letta.com/guides/server/remote):
+
 ```bash
-docker run -d --name letta -p 8283:8283 -v letta-data:/root/.letta letta/letta:latest
+# Volume mount for persistent agent memory
+-v ~/.letta/.persist/pgdata:/var/lib/postgresql/data
 ```
 
-**HTTP Service** - runs on host (not containerized):
+The Letta Docker image bundles PostgreSQL. Without this volume mount, **all agent data is lost on container restart**.
+
+For cloud deployments, you can also use external PostgreSQL via `LETTA_PG_URI` environment variable.
+
+### Environment Variables for Cloud
+
+**HTTP Service**:
 ```bash
-uv run letta-server
-```
-
-### External Service Dependencies
-
-| Service | Requirement | Notes |
-|---------|-------------|-------|
-| Claude API | Required | `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` |
-| Langfuse | Optional | Tracing/observability, gracefully degrades |
-| Honcho | Future | Theory-of-mind layer (Phase 3) |
-
-### Environment Variables Required for Deployment
-
-**Core (`.env.example`)**:
-```bash
-LETTA_BASE_URL=http://localhost:8283
-OPENAI_API_KEY=sk-...
-# or ANTHROPIC_API_KEY=sk-ant-...
-```
-
-**HTTP Service (`YOULAB_SERVICE_` prefix)**:
-```bash
-YOULAB_SERVICE_HOST=127.0.0.1
+YOULAB_SERVICE_HOST=0.0.0.0              # Accept external connections
 YOULAB_SERVICE_PORT=8100
-YOULAB_SERVICE_LETTA_BASE_URL=http://localhost:8283
-YOULAB_SERVICE_LANGFUSE_ENABLED=true  # optional
-YOULAB_SERVICE_LANGFUSE_PUBLIC_KEY=...
-YOULAB_SERVICE_LANGFUSE_SECRET_KEY=...
+YOULAB_SERVICE_LETTA_BASE_URL=http://letta:8283  # Internal service name
+OPENAI_API_KEY=sk-...
 ```
 
-**Source**: `src/letta_starter/config/settings.py:106-153`
-
-### Security Model
-
-Current "trust localhost" approach (`thoughts/shared/plans/2025-12-26-youlab-technical-foundation.md`):
-- No authentication between services
-- API key authentication designed but not implemented
-- All services assume local network
-
-**Implication**: Any team deployment needs either:
-1. VPN/tunnel to appear as localhost
-2. Network isolation (private VPC)
-3. Authentication implementation (more work)
-
-## Deployment Options Analysis
-
-### Option A: Shared Dev Server + Tunnel (Recommended)
-
-**How it works**: Run the full stack on a single server (personal machine, EC2, DigitalOcean droplet). Team accesses via secure tunnel.
-
-**Setup**:
-1. Use existing local dev setup on a dedicated machine
-2. Expose via Tailscale (VPN) or ngrok/Cloudflare Tunnel (public)
-3. Team connects to `your-server.tailnet.ts.net:3000` or `xxx.ngrok.io`
-
-**Pros**:
-- No infrastructure changes needed
-- Development workflow unchanged (edit code, restart service)
-- Branch testing: checkout branch, restart services
-- Works today with zero code changes
-
-**Cons**:
-- Single point of failure (your machine)
-- Your machine must be running/online
-- All team shares same instance (no isolation)
-
-**Branch testing workflow**:
+**Letta Server**:
 ```bash
-# On server
-git checkout feature-branch
-docker restart open-webui letta
-uv run letta-server  # restart HTTP service
-# Team tests immediately
+OPENAI_API_KEY=sk-...
+# Optional: LETTA_PG_URI for external PostgreSQL
 ```
 
-### Option B: Unified Docker Compose
-
-**How it works**: Create a single `docker-compose.yml` that runs all 4 services together.
-
-**What's needed**:
-1. Create Dockerfile for HTTP Service (doesn't exist yet)
-2. Unified compose file with all services
-3. Environment variable management
-4. Networking between containers
-
-**Pros**:
-- Reproducible deployment
-- Easy to spin up on any Docker host
-- Can run multiple instances (staging, production)
-
-**Cons**:
-- Need to create Dockerfile for HTTP Service
-- Need to rebuild container on code changes
-- More moving parts than Option A
-
-**Rough structure**:
-```yaml
-services:
-  ollama: ...
-  open-webui: ...
-  letta: ...
-  http-service:
-    build: .
-    ports: ["8100:8100"]
-    environment:
-      LETTA_BASE_URL: http://letta:8283
-    depends_on: [letta]
+**OpenWebUI**:
+```bash
+# Disable Ollama (not needed)
+OLLAMA_BASE_URL=  # Leave empty or don't set
+# Point Pipe to HTTP Service
+# (Configured in admin UI, not env var)
 ```
 
-### Option C: Cloud Platform (Railway/Fly.io/Render)
+### OpenWebUI Authentication
 
-**How it works**: Deploy containerized services to a cloud platform.
+OpenWebUI handles user authentication natively:
+- First user becomes admin
+- Admin can disable new account creation in Settings
+- Users authenticate against OpenWebUI's internal user database
+- No external auth service needed for team of 4
 
-**What's needed**:
-1. Everything from Option B (Dockerfiles, compose)
-2. Platform configuration (Railway.toml, fly.toml)
-3. Environment variable management in platform
-4. Consider persistent storage (volumes)
-5. May need to split services across multiple apps
+## Railway Deployment (Recommended)
 
-**Complexity considerations**:
-- OpenWebUI: Large image, needs volume for SQLite
-- Letta: Needs persistent volume for agent memory
-- HTTP Service: Easiest (stateless)
-- Ollama: Very large, may want to skip (use OpenAI directly)
+### Why Railway
 
-**Pros**:
-- Professional deployment
-- Always available
-- Multiple environments possible
-- CI/CD integration
+- [One-click OpenWebUI template](https://railway.com/deploy/open-webui) exists
+- [Persistent volumes](https://docs.railway.com/reference/volumes) up to 250GB on Pro plan
+- Multiple services in one project with internal networking
+- Auto-HTTPS on all services
+- GitHub integration for auto-deploy on push
+- Cost: ~$5-20/month for this stack
 
-**Cons**:
-- Cost ($5-50/month depending on platform)
-- More complex setup and debugging
-- Code changes require deploy pipeline
-- Overkill for team of 4 testing
-
-## Code References
-
-- `OpenWebUI/open-webui/docker-compose.yaml` - Existing OpenWebUI compose
-- `docs/Quickstart.md` - Current local setup documentation
-- `src/letta_starter/server/cli.py:8-17` - HTTP service entry point
-- `src/letta_starter/config/settings.py:106-153` - Environment configuration
-- `.env.example` - Environment template
-
-## Architecture Documentation
-
-### Current Local Architecture
+### Deployment Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        localhost                                 │
+│                     Railway Project                              │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐       │
-│  │  OpenWebUI   │    │    Ollama    │    │    Letta     │       │
-│  │   :3000      │    │   :11434     │    │    :8283     │       │
-│  │   (Docker)   │    │   (Docker)   │    │   (Docker)   │       │
-│  └──────┬───────┘    └──────────────┘    └──────▲───────┘       │
-│         │                                        │               │
-│         │ http://host.docker.internal:8100       │               │
-│         ▼                                        │               │
-│  ┌──────────────┐                               │               │
-│  │ HTTP Service │───────────────────────────────┘               │
-│  │    :8100     │   http://localhost:8283                       │
-│  │   (Host)     │                                               │
-│  └──────────────┘                                               │
+│  ┌──────────────────┐                                           │
+│  │    OpenWebUI     │◄──── HTTPS (public domain)                │
+│  │   (template)     │                                           │
+│  │ Volume: /data    │                                           │
+│  └────────┬─────────┘                                           │
+│           │                                                      │
+│           │ http://http-service.railway.internal:8100           │
+│           ▼                                                      │
+│  ┌──────────────────┐                                           │
+│  │   HTTP Service   │◄──── Internal only (no public URL)        │
+│  │   (Dockerfile)   │                                           │
+│  │   Stateless      │                                           │
+│  └────────┬─────────┘                                           │
+│           │                                                      │
+│           │ http://letta.railway.internal:8283                  │
+│           ▼                                                      │
+│  ┌──────────────────┐                                           │
+│  │   Letta Server   │◄──── Internal only                        │
+│  │   (Docker image) │                                           │
+│  │ Volume: /pgdata  │◄──── CRITICAL: Agent memory               │
+│  └──────────────────┘                                           │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Team Deployment with Tunnel (Option A)
+### Setup Steps
 
+1. **Create Railway Project**
+   - Start from OpenWebUI template: https://railway.com/deploy/open-webui
+   - This creates OpenWebUI service with volume
+
+2. **Add Letta Service**
+   - Add new service → Docker Image → `letta/letta:latest`
+   - Add volume mounted to `/var/lib/postgresql/data`
+   - Set environment variables: `OPENAI_API_KEY`
+   - No public URL needed (internal only)
+
+3. **Add HTTP Service**
+   - Add new service → GitHub repo (or Dockerfile)
+   - Point to YouLab repo, Dockerfile at root
+   - Set environment variables:
+     - `YOULAB_SERVICE_HOST=0.0.0.0`
+     - `YOULAB_SERVICE_LETTA_BASE_URL=http://letta.railway.internal:8283`
+     - `OPENAI_API_KEY`
+   - No public URL needed (internal only)
+
+4. **Configure OpenWebUI**
+   - Access via Railway-provided HTTPS URL
+   - Create admin account (first user)
+   - Disable new registrations in Settings
+   - Add Pipe from `src/letta_starter/pipelines/letta_pipe.py`
+   - Set Pipe valve: `LETTA_SERVICE_URL=http://http-service.railway.internal:8100`
+
+5. **Invite Team**
+   - Create accounts for team members manually in OpenWebUI admin
+   - Share the Railway HTTPS URL
+
+### What Needs to Be Created
+
+**Dockerfile for HTTP Service** (doesn't exist yet):
+
+```dockerfile
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install uv
+RUN pip install uv
+
+# Copy project files
+COPY pyproject.toml uv.lock ./
+COPY src/ ./src/
+
+# Install dependencies
+RUN uv sync --frozen
+
+# Run the service
+EXPOSE 8100
+CMD ["uv", "run", "letta-server"]
 ```
-┌──────────────┐     ┌──────────────────────────────────────────────┐
-│  Team Member │     │            Development Server                 │
-│              │     ├──────────────────────────────────────────────┤
-│  Browser     │────▶│  Tailscale/ngrok                             │
-│              │     │       │                                       │
-└──────────────┘     │       ▼                                       │
-                     │  ┌──────────────┐  ┌──────────────┐          │
-                     │  │  OpenWebUI   │  │    Letta     │          │
-                     │  │   :3000      │  │    :8283     │          │
-                     │  └──────┬───────┘  └──────▲───────┘          │
-                     │         │                  │                  │
-                     │         ▼                  │                  │
-                     │  ┌──────────────┐         │                  │
-                     │  │ HTTP Service │─────────┘                  │
-                     │  │    :8100     │                            │
-                     │  └──────────────┘                            │
-                     │                                               │
-                     │  Git repo: /Users/you/Git/YouLab             │
-                     └──────────────────────────────────────────────┘
-```
+
+### Development Workflow with Railway
+
+**Option A: Auto-deploy from main**
+- Push to `main` → Railway auto-deploys
+- Team tests on production URL
+
+**Option B: Staging environment**
+- Create second Railway project or environment
+- Deploy feature branches there
+- Team tests on staging URL
+
+**Option C: Local + Cloud hybrid**
+- Develop locally as usual
+- Push to branch when ready for team testing
+- Railway deploys branch to staging
+
+## Alternative: Fly.io
+
+Fly.io is more complex but offers:
+- Edge deployment (servers closer to users)
+- More control over infrastructure
+- Slightly cheaper for compute-heavy workloads
+
+**Drawbacks**:
+- No native docker-compose support
+- Requires converting to `fly.toml` configuration
+- Each service = separate Fly app
+- More manual networking setup
+
+See [Fly.io Docker documentation](https://fly.io/docs/app-guides/multiple-processes/)
+
+## Alternative: Dev Server + Tunnel (Simpler Short-term)
+
+If you want to start testing today without cloud setup:
+
+1. Run stack on your machine (existing setup)
+2. Expose via Tailscale or ngrok
+3. Team accesses your machine directly
+4. Migrate to Railway when ready for always-on
+
+**Pros**: Works immediately, no new infrastructure
+**Cons**: Your machine must be online, single point of failure
+
+## Code References
+
+- `src/letta_starter/pipelines/letta_pipe.py:25` - Pipe default URL: `http://host.docker.internal:8100`
+- `src/letta_starter/server/agents.py:110` - Model hardcoded to `openai/gpt-4o-mini`
+- `src/letta_starter/server/cli.py:8-17` - HTTP service entry point
+- `src/letta_starter/config/settings.py:106-153` - Environment configuration
+- `OpenWebUI/open-webui/docker-compose.yaml` - Local OpenWebUI compose (includes Ollama, not needed for cloud)
+- `docs/Quickstart.md` - Current local setup documentation
 
 ## Historical Context (from thoughts/)
 
-- `thoughts/shared/plans/2025-12-26-youlab-technical-foundation.md` - Technical foundation explicitly scopes out production deployment for pilot
+- `thoughts/shared/plans/2025-12-26-youlab-technical-foundation.md` - Original scope excluded production deployment
 - `thoughts/shared/research/2025-12-31-open-webui-docker-setup.md` - Docker setup research
-- `thoughts/shared/research/2026-01-04-documentation-launch-instructions-assessment.md` - Recent launch instructions assessment
 
-**Key Decision**: "Production deployment infrastructure (staying local for pilot)" was explicitly excluded from Phase 1-2 scope.
+**Note**: The original plan scoped out production deployment for pilot. This research expands scope to support team testing and future launch.
 
-## Recommendation
+## Next Steps
 
-**For a team of 4 testing during active development**: Use **Option A (Shared Dev Server + Tunnel)**
+1. **Create Dockerfile** for HTTP Service (see template above)
+2. **Test Railway deployment** with all three services
+3. **Configure OpenWebUI** authentication (disable registration)
+4. **Document deployment** in `/docs/Deployment.md`
 
-Reasoning:
-1. Zero infrastructure changes needed
-2. Development workflow stays exactly the same
-3. Branch testing is trivial (git checkout + restart)
-4. Can migrate to Option B/C later when needed
-5. Pilot phase explicitly scoped local-only
+## Web Sources
 
-**Suggested setup**:
-1. Use Tailscale (free for personal use, 100 devices)
-2. Team members join your Tailscale network
-3. Share the Tailscale hostname: `your-machine.tailnet.ts.net:3000`
-4. Keep developing normally; team tests in real-time
-
-**For branch testing**:
-1. Create a simple script to switch branches and restart services
-2. Or: Run a second instance on different ports for "staging"
+- [Railway Volumes Documentation](https://docs.railway.com/reference/volumes)
+- [Railway Open WebUI Template](https://railway.com/deploy/open-webui)
+- [Letta Remote Deployment Guide](https://docs.letta.com/guides/server/remote)
+- [OpenWebUI Environment Configuration](https://docs.openwebui.com/getting-started/env-configuration/)
+- [Fly.io Multiple Processes](https://fly.io/docs/app-guides/multiple-processes/)
 
 ## Open Questions
 
-1. Should the HTTP Service be containerized for easier deployment?
-2. Is persistent agent state important (Letta volumes) or can team start fresh?
-3. Should authentication be implemented before team access?
-4. Would team benefit from separate Langfuse project for tracing visibility?
+1. Should Letta use Railway's managed PostgreSQL instead of bundled PostgreSQL for better reliability?
+2. Do you want staging + production environments, or just one deployment?
+3. Should the HTTP Service have a public healthcheck URL for monitoring?
