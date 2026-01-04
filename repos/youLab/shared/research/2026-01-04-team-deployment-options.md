@@ -5,11 +5,11 @@ git_commit: 29783e20ce6d230469eee40148d80b068d2fd021
 branch: main
 repository: YouLab
 topic: "Cloud Deployment Options for YouLab"
-tags: [research, deployment, infrastructure, docker, railway, cloud, cost-analysis]
+tags: [research, deployment, infrastructure, docker, railway, cloud, cost-analysis, aws, ecs, fargate, lightsail]
 status: complete
 last_updated: 2026-01-04
 last_updated_by: claude
-last_updated_note: "Added actual resource requirements analysis and Railway scaling deep-dive"
+last_updated_note: "Added AWS deployment deep-dive: Lightsail, ECS Fargate, App Runner comparison"
 ---
 
 # Research: Cloud Deployment Options for YouLab
@@ -498,6 +498,251 @@ Choose **Coolify + Hetzner** if:
 - You're comfortable SSHing into a server occasionally
 - Docker Compose native support appeals to you
 - EU data residency is acceptable (or use US Hetzner region)
+
+---
+
+## Follow-up Research: AWS Deployment Deep-Dive
+
+**Date**: 2026-01-04T18:18:14+07:00
+**Question**: Best AWS deployment setup balancing DX, cost, and scalability
+
+### Executive Summary
+
+| AWS Option | Monthly Cost | DX Score | Scalability | Best For |
+|------------|--------------|----------|-------------|----------|
+| **Lightsail VPS** | $20-35 | ⭐⭐⭐⭐ | Manual | Simplest AWS, good for start |
+| **ECS Fargate + Copilot** | $50-80 | ⭐⭐⭐ | Auto | Production-ready scaling |
+| **App Runner** | $60-80 | ⭐⭐⭐ | Auto | Simpler Fargate, but limits |
+| **ECS on EC2** | $30-50 | ⭐⭐ | Manual/Auto | Cost optimization later |
+
+**Recommendation**: Start with **Lightsail VPS ($20/mo)** for immediate deployment, then migrate to **ECS Fargate with Copilot** when you need auto-scaling.
+
+---
+
+### AWS Option 1: Lightsail VPS + Docker Compose (Recommended Start)
+
+**The simplest AWS path** - closest to local development workflow.
+
+| Instance | RAM | vCPU | Storage | Transfer | Price |
+|----------|-----|------|---------|----------|-------|
+| 2GB | 2GB | 2 | 60GB | 3TB | $10/mo |
+| **4GB** | **4GB** | **2** | **80GB** | **4TB** | **$20/mo** |
+| 8GB | 8GB | 2 | 160GB | 5TB | $40/mo |
+
+**Why this works:**
+- Full Docker Compose support (unlike managed services)
+- Persistent storage for Letta PostgreSQL
+- Your existing `docker-compose.yml` works as-is
+- SSH + deploy scripts = familiar workflow
+- **~40% cheaper than EC2** for equivalent specs
+
+**Deployment workflow:**
+```bash
+# One-time setup
+ssh ubuntu@your-lightsail-ip
+apt install docker.io docker-compose
+git clone your-repo && cd your-repo
+
+# Deploy (can be automated via GitHub Actions)
+docker-compose pull && docker-compose up -d
+```
+
+**Scaling path:**
+1. Start with 4GB ($20/mo) for 5 users
+2. Resize to 8GB ($40/mo) for 10-20 users
+3. Migrate to ECS Fargate when you need auto-scaling
+
+**Limitations:**
+- No auto-scaling (manual resize only)
+- Single point of failure
+- You manage OS updates and Docker
+
+---
+
+### AWS Option 2: ECS Fargate + Copilot CLI (Production Path)
+
+**AWS Copilot** simplifies ECS to a Railway-like experience.
+
+**Setup (~30 min):**
+```bash
+# Install Copilot CLI
+brew install aws/tap/copilot-cli
+
+# Initialize app
+copilot app init youlab
+copilot svc init --name openwebui --type "Load Balanced Web Service"
+copilot svc init --name http-service --type "Backend Service"
+copilot svc init --name letta --type "Backend Service"
+
+# Deploy
+copilot deploy --all
+
+# Setup CI/CD pipeline
+copilot pipeline init --url https://github.com/your/repo
+copilot pipeline deploy
+```
+
+**Cost breakdown:**
+
+| Component | Cost/month |
+|-----------|------------|
+| Fargate compute (1GB total RAM) | $27-34 |
+| Application Load Balancer | $16 |
+| NAT Gateway (for outbound) | $32 (or $3 with NAT instance) |
+| RDS db.t4g.micro (PostgreSQL) | $12-15 |
+| EBS/storage | $1-2 |
+| **Total** | **$58-100** |
+
+**Cost optimization:**
+- Use ARM (Graviton2) - 20% cheaper
+- NAT Instance instead of NAT Gateway - saves $29/mo
+- Savings Plans (1-year commitment) - up to 50% off
+
+**DX comparison:**
+
+| Aspect | Railway | Copilot |
+|--------|---------|---------|
+| First deploy | ~5 min | ~10 min |
+| Subsequent deploys | git push | git push (via pipeline) |
+| Environment setup | Click button | `copilot env init` |
+| Logs | Web UI | `copilot svc logs` |
+| Scaling | Automatic | Manifest config |
+
+**When to choose this:**
+- Need auto-scaling for variable load
+- Want AWS-native CI/CD
+- Planning for production scale
+- Have budget for $60-80/mo
+
+---
+
+### AWS Option 3: App Runner (Simpler but Limited)
+
+**AWS's answer to Railway** - but with significant limitations for your stack.
+
+**Cost:** ~$45-60/mo for compute + $15-50 for RDS = **$60-110/mo**
+
+**Critical limitation: No persistent storage.** You CANNOT run PostgreSQL in App Runner.
+
+**Architecture required:**
+```
+OpenWebUI (App Runner, public)
+     ↓
+HTTP Service (App Runner, private endpoint)
+     ↓
+Letta Server (App Runner, private endpoint)
+     ↓
+RDS PostgreSQL (separate service)
+```
+
+**When to choose:**
+- Only if you need scale-to-zero (pays nothing when idle)
+- Simpler than Fargate for stateless services
+- Must use RDS for database
+
+**When NOT to choose:**
+- Bundled Letta Docker image (has PostgreSQL) - won't work
+- Need persistent filesystem storage
+- Want docker-compose workflow
+
+---
+
+### AWS Option 4: Lightsail Container Service (NOT Recommended)
+
+**$40/mo for 2GB RAM with NO persistent storage.** Avoid this.
+
+- Designed for stateless web apps only
+- Cannot attach volumes to containers
+- Would require separate managed database anyway
+- Worse value than Lightsail VPS or ECS Fargate
+
+---
+
+### Database: RDS vs Bundled PostgreSQL
+
+Your Letta Docker image bundles PostgreSQL. On AWS, you have two choices:
+
+| Option | Monthly Cost | Pros | Cons |
+|--------|--------------|------|------|
+| **Bundled in container** (Lightsail VPS) | $0 extra | Simple, works as-is | Single point of failure |
+| **RDS db.t4g.micro** | $12-15 | Managed backups, Multi-AZ option | Extra cost, complexity |
+
+**Recommendation for 5 users:** Start with bundled PostgreSQL on Lightsail VPS. Migrate to RDS when reliability becomes critical.
+
+**RDS configuration (when ready):**
+```
+Instance: db.t4g.micro (2 vCPU burstable, 1GB RAM)
+Storage: 10GB gp3
+Multi-AZ: No (save money for dev)
+Backup: 7 days (free)
+Monthly: ~$12-15
+```
+
+Set `LETTA_PG_URI=postgresql://user:pass@your-rds-endpoint:5432/letta` to use external DB.
+
+---
+
+### Scaling Path: Lightsail → ECS Fargate
+
+**Phase 1: Now (5 users)**
+```
+Lightsail VPS 4GB: $20/mo
+├── OpenWebUI (port 3000)
+├── HTTP Service (port 8100)
+└── Letta Server + bundled PG (port 8283)
+```
+Total: **$20/mo**
+
+**Phase 2: Growth (20-50 users)**
+```
+Lightsail VPS 8GB: $40/mo
++ RDS db.t4g.micro: $15/mo
+```
+Total: **$55/mo**
+
+**Phase 3: Scale (100+ users)**
+```
+ECS Fargate (via Copilot): $50-70/mo
++ RDS db.t4g.small: $25-30/mo
++ ALB: $16/mo
+```
+Total: **$90-120/mo** with auto-scaling
+
+---
+
+### DX Comparison: Railway vs AWS Options
+
+| Factor | Railway | Lightsail VPS | ECS Copilot |
+|--------|---------|---------------|-------------|
+| **Time to first deploy** | 10 min | 30-60 min | 30-45 min |
+| **Deploy workflow** | git push | SSH + docker-compose | git push (after pipeline setup) |
+| **One-click Postgres** | Yes | No (bundled in container) | No (use RDS) |
+| **Auto-scaling** | Yes | No | Yes |
+| **Cost (your stack)** | $25-40/mo | $20/mo | $60-80/mo |
+| **Learning curve** | Low | Low | Medium |
+
+---
+
+### Recommendation
+
+**For your situation (5 users, active development, need scalability path):**
+
+1. **Start today: Lightsail VPS 4GB at $20/mo**
+   - Fastest path to AWS deployment
+   - Docker Compose works immediately
+   - Plenty of headroom for 5-20 users
+   - Create daily EBS snapshots for backup ($0.50/mo)
+
+2. **Scale trigger: When you hit 8GB RAM utilization**
+   - Migrate to ECS Fargate + Copilot
+   - Add RDS for database
+   - Enable auto-scaling
+
+3. **Alternative: Stay on Railway**
+   - Railway at $25-40/mo is genuinely easier
+   - AWS only makes sense if you need: AWS ecosystem integration, specific compliance, or expect significant scale
+
+**Bottom line:** AWS adds complexity and cost vs Railway/Fly.io. Choose AWS if you have specific requirements (compliance, AWS integration, future scale to 100+ users) or want to learn the AWS ecosystem. Otherwise, Railway/Fly.io remain better value for small teams.
 
 ---
 
