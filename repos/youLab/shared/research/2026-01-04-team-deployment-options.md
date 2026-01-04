@@ -8,8 +8,8 @@ topic: "Cloud Deployment Options for YouLab"
 tags: [research, deployment, infrastructure, docker, railway, cloud, cost-analysis]
 status: complete
 last_updated: 2026-01-04
-last_updated_by: ariasulin
-last_updated_note: "Added comprehensive cost comparison: Railway vs Fly.io vs Render vs DigitalOcean vs Coolify"
+last_updated_by: claude
+last_updated_note: "Added actual resource requirements analysis and Railway scaling deep-dive"
 ---
 
 # Research: Cloud Deployment Options for YouLab
@@ -301,7 +301,7 @@ If you want to start testing today without cloud setup:
 
 | Platform | Monthly Cost | Complexity | Verdict |
 |----------|-------------|------------|---------|
-| **Hetzner + Coolify** | **$6.50** | Medium | **Best value** if you don't mind self-hosting |
+You | **Hetzner + Coolify** | **$6.50** | Medium | **Best value** if you don't mind self-hosting |
 | **Fly.io** | $15-20 | Low-Medium | **Best managed PaaS** for cost |
 | **DO Droplet** | $12-24 | Medium | Good middle ground |
 | **Render** | $23-42 | Low | Easy but pricier |
@@ -419,7 +419,7 @@ Coolify = open-source Railway clone. Full docker-compose support, automatic SSL,
 | **Docker Compose** | ❌ | ❌ | ❌ | ❌ | ✅ |
 | **Persistent volumes** | ✅ | ✅ | ✅ | ❌ | ✅ |
 | **Auto SSL** | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **Internal networking** | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Internal networking** | ✅ | ✅ | ✅ | ✅ | ✅ You |
 | **One-click OpenWebUI** | ✅ | ❌ | ❌ | ❌ | ✅ |
 | **Preview environments** | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Zero-config** | ✅✅ | ✅ | ✅ | ✅ | ❌ |
@@ -498,3 +498,264 @@ Choose **Coolify + Hetzner** if:
 - You're comfortable SSHing into a server occasionally
 - Docker Compose native support appeals to you
 - EU data residency is acceptable (or use US Hetzner region)
+
+---
+
+## Follow-up Research: Actual Resource Requirements & Railway Scaling
+
+**Date**: 2026-01-04T18:02:43+07:00
+**Question**: Do I really need 2GB RAM? What are my actual needs? How does Railway scale?
+
+### TL;DR
+
+**No, you don't need 2GB RAM per service.** The 2GB figure comes from conservative defaults, not actual usage.
+
+| Service | Previous Estimate | Actual Need | Optimized |
+|---------|-------------------|-------------|-----------|
+| HTTP Service | 512MB | **256MB** | 128MB possible |
+| Letta Server | 2GB | **1GB** | 512MB with external PostgreSQL |
+| OpenWebUI | 2GB | **512MB-1GB** | 256MB with optimizations |
+| **Total** | 6GB | **2-2.5GB** | **1GB achievable** |
+
+---
+
+### Actual Resource Analysis by Service
+
+#### 1. HTTP Service (Your Code)
+
+**Analyzed from codebase** (`src/letta_starter/server/`):
+
+| Component | Memory |
+|-----------|--------|
+| Python runtime | 15-20 MB |
+| FastAPI + uvicorn | 10-15 MB |
+| Letta client (httpx) | 1-2 MB |
+| Agent ID cache (100 users) | 10 KB |
+| Langfuse (if enabled) | 2-3 MB |
+| **Total baseline** | **30-45 MB** |
+| **Peak with 10 concurrent requests** | **40-60 MB** |
+
+**Key findings**:
+- No in-memory databases or document stores
+- No ML models loaded
+- Agent cache scales at ~1 KB per 10 users
+- Documents stored in Letta, not locally
+- Truly stateless - can run on **128MB**
+
+**Recommendation**: **256MB** is comfortable, 128MB is tight but works.
+
+#### 2. Letta Server (letta/letta Docker image)
+
+The bundled image includes PostgreSQL, Redis, and the Python server:
+
+| Component | Memory |
+|-----------|--------|
+| PostgreSQL + pgvector | 100-300 MB |
+| Redis | 50-100 MB |
+| Python/FastAPI server | 200-500 MB |
+| OpenTelemetry (optional) | 50-100 MB |
+| **Total** | **500MB-1GB** |
+
+**Memory at different limits**:
+- **256MB**: Will crash - PostgreSQL alone needs more
+- **512MB**: Marginal - may OOM during vector operations
+- **1GB**: Minimum viable for light single-user usage
+- **2GB**: Comfortable headroom
+
+**External PostgreSQL option**: Setting `LETTA_PG_URI` to use Railway's managed PostgreSQL or external DB reduces container memory to **300-500MB** (Python + Redis only).
+
+**Source**: [GitHub Discussion #2276](https://github.com/letta-ai/letta/discussions/2276)
+
+#### 3. OpenWebUI
+
+Memory varies dramatically based on what's enabled:
+
+| Configuration | Memory |
+|---------------|--------|
+| With local embedding models | 650MB-1GB+ |
+| Default (no Ollama) | 500MB-1GB |
+| **Optimized for external API** | **200-500MB** |
+
+**Why yours can be smaller**: You're using Claude via Letta, not local models. The memory hogs are:
+1. Local SentenceTransformers for RAG embeddings
+2. Whisper for speech-to-text
+3. ChromaDB for document storage
+
+**Optimization env vars for your case**:
+```bash
+RAG_EMBEDDING_ENGINE=openai      # Use API, not local model
+AUDIO_STT_ENGINE=openai          # Or disable
+ENABLE_AUTOCOMPLETE_GENERATION=False
+ENABLE_TITLE_GENERATION=False
+ENABLE_TAGS_GENERATION=False
+```
+
+**Result**: Raspberry Pi users report **~200MB** with these optimizations.
+
+**Source**: [OpenWebUI Docs - Reduce RAM Usage](https://docs.openwebui.com/tutorials/tips/reduce-ram-usage/)
+
+---
+
+### Railway Scaling Deep-Dive
+
+#### Does Railway Scale to Zero?
+
+**Yes**, via "App Sleeping" (serverless mode). Services sleep after **10 minutes of no outbound traffic**.
+
+While asleep: Pay only for storage (~$0.15/GB/month), not compute.
+
+**BUT**: Databases prevent sleeping. Connection pools, keep-alives, and health checks create outbound traffic that keeps services awake.
+
+#### Cold Start Reality
+
+| Claim | Reality |
+|-------|---------|
+| Railway marketing | "Sub-1-second" |
+| **Actual user reports** | **5-22 seconds** |
+
+Cold starts are highly variable. For a 4-person team testing, this is fine. For production, not acceptable.
+
+#### CPU/Memory Billing
+
+Railway bills **actual utilization**, not allocation. If your service idles at 10% CPU and 200MB RAM, you pay for that.
+
+**Pricing rates**:
+- vCPU: ~$20/month per core (billed per second)
+- Memory: **~$10/month per GB** (this dominates costs)
+- Storage: $0.15/GB/month
+- Egress: $0.05/GB
+
+**90% of Railway bills come from memory, not CPU.**
+
+#### Hidden Gotchas
+
+1. **$20 minimum** on Pro plan (but includes $20 credits)
+2. **Databases keep services awake** - connection pools prevent sleeping
+3. **PR deploys mirror entire stack** - disable if not needed
+4. **External PostgreSQL connections** still count as outbound traffic
+
+---
+
+### Revised Cost Estimates (Realistic)
+
+#### Scenario A: Aggressive Optimization (Hobby Plan)
+
+```
+HTTP Service: 256MB × $10/GB = $2.56/month
+Letta (external PG): 512MB × $10/GB = $5.12/month
+OpenWebUI (optimized): 512MB × $10/GB = $5.12/month
+Railway managed PostgreSQL: $1-2/month
+Storage (5GB): $0.75/month
+─────────────────────────────────────────────
+Total: ~$15/month
+```
+
+**Fixed costs**: $5 Hobby plan minimum
+**Variable costs**: ~$10-15 based on actual usage
+
+#### Scenario B: Conservative (Current Estimates)
+
+```
+HTTP Service: 512MB = $5/month
+Letta (bundled PG): 1GB = $10/month
+OpenWebUI: 1GB = $10/month
+Storage (10GB): $1.50/month
+─────────────────────────────────────────────
+Total: ~$27/month
+```
+
+#### Scenario C: Let Services Sleep
+
+If services can actually sleep (you're not actively using the system):
+
+```
+Compute when active: ~$0.50/hour for full stack
+Storage only when idle: ~$1/month
+Hobby credits: $5 included
+─────────────────────────────────────────────
+Light usage: $5-10/month possible
+```
+
+---
+
+### What Breaks Sleeping (Important)
+
+Services won't sleep if they have:
+- Active database connection pools
+- Health check endpoints being polled
+- Framework telemetry (Next.js phones home)
+- Inter-service private network requests
+- WebSocket connections
+
+**Your stack**: Letta's bundled PostgreSQL maintains connections internally, preventing the Letta service from sleeping. HTTP Service and OpenWebUI could potentially sleep between requests.
+
+---
+
+### Minimum Viable Configuration
+
+**For Railway with your stack**:
+
+```
+┌─────────────────────────────────────────────┐
+│ OpenWebUI (optimized)                       │
+│   Memory: 512MB                             │
+│   Serverless: enabled                       │
+│   Env: RAG_EMBEDDING_ENGINE=openai          │
+├─────────────────────────────────────────────┤
+│ HTTP Service                                │
+│   Memory: 256MB                             │
+│   Serverless: enabled                       │
+│   Base image: python:3.11-slim              │
+├─────────────────────────────────────────────┤
+│ Letta Server                                │
+│   Memory: 1GB minimum                       │
+│   Serverless: DISABLED (has PostgreSQL)     │
+│   Volume: 5GB                               │
+└─────────────────────────────────────────────┘
+
+Estimated cost: $15-20/month
+```
+
+**Alternative with external PostgreSQL**:
+
+```
+Same as above, but:
+- Letta Server: 512MB (no bundled PG)
+- Railway PostgreSQL: $7/month (dedicated)
+- Letta can now sleep
+
+Estimated cost: $18-22/month (slightly higher due to managed DB)
+```
+
+---
+
+### Final Recommendations
+
+#### For Your Use Case (4-person team testing)
+
+**If you want simplest setup**: Railway at **$20-25/month**
+- Use 1GB for Letta (with bundled PostgreSQL)
+- Use 512MB for OpenWebUI (with optimizations)
+- Use 256MB for HTTP Service
+- Don't worry about sleeping - you're actively developing
+
+**If you want cheapest managed PaaS**: Fly.io at **$12-15/month**
+- Same memory allocations as above
+- More manual setup, but ~40% cheaper
+
+**If you want cheapest overall**: Hetzner + Coolify at **$6.50/month**
+- 8GB RAM shared across all services
+- Full docker-compose support
+- You handle maintenance
+
+---
+
+### Sources
+
+- [Railway App Sleeping](https://docs.railway.com/reference/app-sleeping)
+- [Railway Pricing](https://railway.com/pricing)
+- [Railway Optimize Usage Guide](https://docs.railway.com/guides/optimize-usage)
+- [OpenWebUI Reduce RAM Usage](https://docs.openwebui.com/tutorials/tips/reduce-ram-usage/)
+- [Letta External PostgreSQL](https://github.com/letta-ai/letta/discussions/2276)
+- [Railway Cold Start Reports](https://station.railway.com/questions/cold-start-slow-ee224f40)
+- YouLab codebase analysis (`src/letta_starter/server/`)
