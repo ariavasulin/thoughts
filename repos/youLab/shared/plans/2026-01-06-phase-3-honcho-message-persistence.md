@@ -140,12 +140,12 @@ YOULAB_SERVICE_HONCHO_ENVIRONMENT=demo
 ### Success Criteria
 
 #### Automated Verification
-- [ ] Dependencies install: `uv sync`
-- [ ] Type checking passes: `make check-agent`
-- [ ] Settings load correctly: `python -c "from letta_starter.config.settings import ServiceSettings; s = ServiceSettings(); print(s.honcho_workspace_id)"`
+- [x] Dependencies install: `uv sync`
+- [x] Type checking passes: `make check-agent`
+- [x] Settings load correctly: `python -c "from letta_starter.config.settings import ServiceSettings; s = ServiceSettings(); print(s.honcho_workspace_id)"`
 
 #### Manual Verification
-- [ ] `.env.example` documents all new variables
+- [x] `.env.example` documents all new variables
 
 ---
 
