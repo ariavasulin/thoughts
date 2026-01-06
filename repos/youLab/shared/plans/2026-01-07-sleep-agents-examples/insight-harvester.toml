@@ -1,0 +1,47 @@
+# insight-harvester.toml - Gathers psychological insights from Honcho
+
+[agent]
+id = "insight-harvester"
+name = "Student Insight Harvester"
+description = "Queries Honcho for student insights and enriches Letta memory"
+version = "1.0.0"
+enabled = true
+
+[triggers]
+schedule = "0 3 * * *"  # 3 AM daily
+
+[triggers.idle]
+enabled = true
+idle_threshold_minutes = 30
+cooldown_minutes = 60
+
+[scope]
+agent_types = ["tutor"]
+all_users = true
+batch_size = 50
+
+[[honcho.queries]]
+id = "learning_style"
+question = "What learning style works best for this student?"
+target_block = "human"
+target_field = "context_notes"
+
+[[honcho.queries]]
+id = "engagement"
+question = "How engaged is this student? What motivates them?"
+target_block = "human"
+target_field = "context_notes"
+
+[[honcho.queries]]
+id = "communication_style"
+question = "How should I adjust my communication style for this student?"
+target_block = "persona"
+target_field = "constraints"
+transform = "prepend"
+
+[memory]
+conflict_strategy = "merge"
+insight_ttl_days = 7
+
+[limits]
+max_runtime_minutes = 30

@@ -1,0 +1,37 @@
+# Background Agents - Scheduled memory enrichment via Honcho Dialectic
+# Place in: config/background_agents.toml
+
+[defaults]
+scope = ["tutor"]
+batch_size = 50
+
+# Each task = trigger + one or more memory update via dialectic queries
+[[task]]
+trigger = "0 3 * * *"  # cron
+
+[[task.human]]
+query = "What learning style works best for this student?"
+field = "context_notes"
+
+[[task.engagement-style]]
+query = "How engaged is this student? What motivates them?"
+field = "context_notes"
+
+# ---
+
+[[task]]
+trigger = { idle_minutes = 30, cooldown = 60 }
+
+[[task.human]]
+query = "Has this student's mood or engagement changed recently?"
+field = "context_notes"
+
+# ---
+
+[[task]]
+trigger = "0 9 * * 1"  # Monday 9 AM
+
+[[task.human]]
+query = "Summarize this student's progress over the past week."
+field = "facts"
+transform = "replace"  # default: append

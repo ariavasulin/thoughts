@@ -1,0 +1,53 @@
+# onboarding-enricher.toml - Enriches new student profiles after initial conversations
+
+[agent]
+id = "onboarding-enricher"
+name = "Onboarding Enricher"
+description = "Builds initial student profile after first few conversations"
+version = "1.0.0"
+enabled = true
+
+[triggers]
+schedule = ""  # No scheduled runs
+
+[triggers.idle]
+enabled = true
+idle_threshold_minutes = 15  # Quick follow-up after conversations
+cooldown_minutes = 120       # But don't spam
+
+[triggers.manual]
+enabled = true
+
+[scope]
+agent_types = ["tutor"]
+user_filter = "conversation_count < 5"  # Only new students
+batch_size = 20
+
+[[honcho.queries]]
+id = "initial_personality"
+question = "Based on early conversations, what can you tell about this student's personality and communication preferences?"
+target_block = "human"
+target_field = "context_notes"
+
+[[honcho.queries]]
+id = "initial_goals"
+question = "What goals or concerns has this student expressed about their college essays?"
+target_block = "human"
+target_field = "facts"
+
+[[honcho.queries]]
+id = "initial_strengths"
+question = "What potential strengths or unique perspectives has this student shown?"
+target_block = "human"
+target_field = "facts"
+
+[memory]
+conflict_strategy = "merge"
+insight_ttl_days = 30  # Keep initial insights longer
+
+[memory.formatting]
+prefix = "[Onboarding]"
+include_timestamp = true
+
+[limits]
+max_runtime_minutes = 15

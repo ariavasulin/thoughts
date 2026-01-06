@@ -1,0 +1,45 @@
+# weekly-summary.toml - Generates weekly progress summaries
+
+[agent]
+id = "weekly-summary"
+name = "Weekly Progress Summarizer"
+description = "Creates weekly summaries of student progress and patterns"
+version = "1.0.0"
+enabled = true
+
+[triggers]
+schedule = "0 6 * * 0"  # 6 AM every Sunday
+
+[triggers.idle]
+enabled = false  # Only runs on schedule
+
+[triggers.manual]
+enabled = true
+
+[scope]
+agent_types = ["tutor"]
+all_users = true
+batch_size = 100
+
+[[honcho.queries]]
+id = "weekly_progress"
+question = "Summarize this student's progress over the past week. What did they work on? What breakthroughs or struggles occurred?"
+target_block = "human"
+target_field = "facts"
+
+[[honcho.queries]]
+id = "weekly_sentiment"
+question = "How has this student's emotional state and engagement trended this week?"
+target_block = "human"
+target_field = "context_notes"
+
+[memory]
+conflict_strategy = "append"
+insight_ttl_days = 7
+
+[memory.formatting]
+prefix = "[Weekly Summary]"
+include_timestamp = true
+
+[limits]
+max_runtime_minutes = 60
