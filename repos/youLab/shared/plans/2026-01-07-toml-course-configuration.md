@@ -27,7 +27,7 @@ config/
 A course designer can edit `config/college-essay.toml` to change:
 - Tutor name, role, tone, capabilities, constraints
 - Welcome messages, error messages
-- Sleep agent configurations
+- Background tasks (scheduled Honcho dialectic queries)
 
 Changes take effect on service restart (no code changes needed).
 
@@ -108,22 +108,34 @@ class MessagesConfig(BaseModel):
     )
 
 
-class SleepAgentTriggers(BaseModel):
-    """Sleep agent trigger configuration."""
+class IdleTrigger(BaseModel):
+    """Idle-based trigger configuration."""
 
-    schedule: str | None = Field(default=None, description="Cron schedule")
-    idle_enabled: bool = Field(default=False)
-    idle_threshold_minutes: int = Field(default=30)
+    idle_minutes: int = Field(..., description="Minutes of inactivity before trigger")
+    cooldown: int = Field(default=60, description="Cooldown minutes between runs")
 
 
-class SleepAgentConfig(BaseModel):
-    """Individual sleep agent configuration."""
+class TaskQuery(BaseModel):
+    """A dialectic query that updates a memory block."""
 
-    id: str = Field(..., description="Unique agent identifier")
-    name: str = Field(..., description="Display name")
-    description: str = Field(default="")
-    enabled: bool = Field(default=True)
-    triggers: SleepAgentTriggers = Field(default_factory=SleepAgentTriggers)
+    query: str = Field(..., description="Question to ask Honcho dialectic")
+    field: str = Field(..., description="Memory block field to update")
+    transform: str = Field(default="append", description="How to apply: append or replace")
+
+
+class BackgroundTask(BaseModel):
+    """A background task with trigger and memory updates."""
+
+    trigger: str | IdleTrigger = Field(..., description="Cron string or idle trigger")
+    human: list[TaskQuery] = Field(default_factory=list, description="Updates to human block")
+
+
+class BackgroundTasksConfig(BaseModel):
+    """Background tasks configuration."""
+
+    scope: list[str] = Field(default_factory=lambda: ["tutor"])
+    batch_size: int = Field(default=50)
+    tasks: list[BackgroundTask] = Field(default_factory=list)
 
 
 class CourseConfig(BaseModel):
@@ -140,8 +152,8 @@ class CourseConfig(BaseModel):
     # Messages
     messages: MessagesConfig = Field(default_factory=MessagesConfig)
 
-    # Sleep agents (optional)
-    sleep_agents: list[SleepAgentConfig] = Field(default_factory=list)
+    # Background tasks (optional)
+    background_tasks: BackgroundTasksConfig = Field(default_factory=BackgroundTasksConfig)
 ```
 
 #### 2. Create Example TOML File
@@ -213,29 +225,42 @@ error_service_unavailable = "I'm taking a short break. Please try again in a mom
 error_timeout = "That took longer than expected. Let's try again."
 
 # =============================================================================
-# SLEEP AGENTS (Background Processing)
+# BACKGROUND TASKS (Scheduled Memory Enrichment)
 # =============================================================================
-# These agents run in the background to enhance the tutoring experience.
+# Tasks that run in the background to enrich agent memory via Honcho dialectic.
 
-[[sleep_agents]]
-id = "insight-harvester"
-name = "Student Insight Harvester"
-description = "Gathers learning style and engagement insights from Honcho"
-enabled = true
+[background_tasks]
+scope = ["tutor"]  # Which agent types to run on
+batch_size = 50
 
-[sleep_agents.triggers]
-schedule = "0 3 * * *"  # 3 AM daily
-idle_enabled = true
-idle_threshold_minutes = 30
+# Daily insight gathering (3 AM)
+[[background_tasks.task]]
+trigger = "0 3 * * *"
 
-[[sleep_agents]]
-id = "progress-reporter"
-name = "Weekly Progress Reporter"
-description = "Generates weekly progress summaries"
-enabled = true
+[[background_tasks.task.human]]
+query = "What learning style works best for this student?"
+field = "context_notes"
 
-[sleep_agents.triggers]
-schedule = "0 9 * * 1"  # Monday 9 AM
+[[background_tasks.task.human]]
+query = "How engaged is this student? What motivates them?"
+field = "context_notes"
+
+# Idle-triggered mood check (30 min inactive)
+[[background_tasks.task]]
+trigger = { idle_minutes = 30, cooldown = 60 }
+
+[[background_tasks.task.human]]
+query = "Has this student's mood or engagement changed recently?"
+field = "context_notes"
+
+# Weekly progress summary (Monday 9 AM)
+[[background_tasks.task]]
+trigger = "0 9 * * 1"
+
+[[background_tasks.task.human]]
+query = "Summarize this student's progress over the past week."
+field = "facts"
+transform = "replace"
 ```
 
 ### Success Criteria:
@@ -306,7 +331,7 @@ class ConfigLoader:
                 "description": data.get("course", {}).get("description", ""),
                 "tutor": data.get("tutor", {}),
                 "messages": data.get("messages", {}),
-                "sleep_agents": data.get("sleep_agents", []),
+                "background_tasks": data.get("background_tasks", {}),
             }
 
             config = CourseConfig(**config_data)
@@ -355,16 +380,26 @@ def load_course_config(course_id: str) -> CourseConfig | None:
 ```python
 """Configuration management."""
 
-from letta_starter.config.course_config import CourseConfig, MessagesConfig, TutorConfig
+from letta_starter.config.course_config import (
+    BackgroundTask,
+    BackgroundTasksConfig,
+    CourseConfig,
+    MessagesConfig,
+    TaskQuery,
+    TutorConfig,
+)
 from letta_starter.config.loader import ConfigLoader, get_config_loader, load_course_config
 from letta_starter.config.settings import ServiceSettings, Settings, get_settings
 
 __all__ = [
+    "BackgroundTask",
+    "BackgroundTasksConfig",
     "ConfigLoader",
     "CourseConfig",
     "MessagesConfig",
     "ServiceSettings",
     "Settings",
+    "TaskQuery",
     "TutorConfig",
     "get_config_loader",
     "get_settings",
@@ -813,6 +848,6 @@ Add note about `config/` directory and TOML configuration.
 ## References
 
 - TOML configuration research: `thoughts/shared/research/2026-01-07-toml-configuration-opportunities.md`
-- Sleep agents TOML schema: `thoughts/shared/plans/2026-01-07-sleep-agents-course-schema.toml`
+- Background tasks TOML schema: `thoughts/shared/plans/2026-01-07-background-agents-schema.toml`
 - Current templates: `src/letta_starter/agents/templates.py`
 - Roadmap Phase 5: `docs/Roadmap.md` (curriculum parser)
