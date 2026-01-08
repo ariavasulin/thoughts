@@ -28,7 +28,7 @@ Implement background agent infrastructure enabling Letta agents to query Honcho'
    - `edit_memory_block`: Update memory block fields with configurable merge strategies
 
 2. **Background worker infrastructure**:
-   - YAML-driven configuration (one file per course)
+   - TOML-driven configuration (one file per course)
    - Scheduled, idle-based, and manual triggers
    - Batch processing across users
 
@@ -49,12 +49,12 @@ curl -X POST localhost:8100/background/insight-harvester/run
 
 # Config reload
 curl -X POST localhost:8100/config/reload
-# → Reloads YAML without restart
+# → Reloads TOML without restart
 ```
 
 ## What We're NOT Doing
 
-- Full YAML schema for curriculum/lessons (Phase 5)
+- Full TOML schema for curriculum/lessons (Phase 5)
 - Complex multi-agent orchestration
 - Real-time idle detection (use scheduled + manual for now)
 - Temporal/Celery integration (APScheduler sufficient for MVP)
@@ -69,7 +69,7 @@ curl -X POST localhost:8100/config/reload
 Phase 1: Dialectic Query Service     ─┐
 Phase 2: Agent Tools                  ├─► Agent can query & edit
 Phase 3: Memory Enricher             ─┘
-Phase 4: Background Worker + YAML    ─► Scheduled processing
+Phase 4: Background Worker + TOML    ─► Scheduled processing
 Phase 5: HTTP Endpoints + Reload     ─► Management API
 ```
 
@@ -173,9 +173,9 @@ class HonchoClient:
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] Unit tests pass: `make test-agent`
-- [ ] Type checking passes: `make check-agent`
-- [ ] Lint passes: `make lint-fix`
+- [x] Unit tests pass: `make test-agent`
+- [x] Type checking passes: `make check-agent`
+- [x] Lint passes: `make lint-fix`
 
 #### Manual Verification:
 - [ ] `query_dialectic()` returns insight from Honcho demo environment
@@ -873,29 +873,34 @@ class MemoryEnricher:
 
 ---
 
-## Phase 4: Background Worker + YAML Configuration
+## Phase 4: Background Worker + TOML Configuration
 
 ### Overview
 
-Create YAML-driven background agent configuration and execution engine.
+Create TOML-driven background agent configuration and execution engine.
 
 ### Changes Required
 
-#### 1. YAML Schema Definition
+#### 1. TOML Schema Definition
 
 **File**: `src/letta_starter/background/schema.py` (new)
 
 ```python
-"""YAML configuration schema for background agents."""
+"""TOML configuration schema for background agents."""
 
 from __future__ import annotations
 
+import sys
 from enum import Enum
 from pathlib import Path
-from typing import Any
 
-import yaml
 from pydantic import BaseModel, Field
+
+# Use tomllib (Python 3.11+) or tomli as fallback
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib
 
 
 class SessionScope(str, Enum):
@@ -956,70 +961,79 @@ class CourseConfig(BaseModel):
 
 
 def load_course_config(path: Path) -> CourseConfig:
-    """Load course configuration from YAML file."""
-    with open(path) as f:
-        data = yaml.safe_load(f)
+    """Load course configuration from TOML file."""
+    with open(path, "rb") as f:
+        data = tomllib.load(f)
     return CourseConfig(**data)
 
 
 def load_all_course_configs(directory: Path) -> dict[str, CourseConfig]:
     """Load all course configs from a directory."""
     configs = {}
-    for yaml_file in directory.glob("*.yaml"):
-        config = load_course_config(yaml_file)
+    for toml_file in directory.glob("*.toml"):
+        config = load_course_config(toml_file)
         configs[config.id] = config
     return configs
 ```
 
-#### 2. Example Course YAML
+#### 2. Example Course TOML
 
-**File**: `config/courses/college-essay.yaml` (new)
+**File**: `config/courses/college-essay.toml` (new)
 
-```yaml
-id: college-essay
-name: College Essay Coaching
+```toml
+# College Essay Coaching Course Configuration
 
-background_agents:
-  - id: insight-harvester
-    name: Student Insight Harvester
-    enabled: true
+id = "college-essay"
+name = "College Essay Coaching"
 
-    triggers:
-      schedule: "0 3 * * *"  # 3 AM daily
-      idle:
-        enabled: false  # Disabled for MVP
-        threshold_minutes: 30
-        cooldown_minutes: 60
-      manual: true
+# =============================================================================
+# Background Agent: Insight Harvester
+# =============================================================================
 
-    agent_types:
-      - tutor
+[[background_agents]]
+id = "insight-harvester"
+name = "Student Insight Harvester"
+enabled = true
+agent_types = ["tutor"]
+user_filter = "all"
+batch_size = 50
 
-    user_filter: all
-    batch_size: 50
+[background_agents.triggers]
+schedule = "0 3 * * *"  # 3 AM daily
+manual = true
 
-    queries:
-      - id: learning_style
-        question: "What learning style works best for this student? Do they prefer examples, theory, or hands-on practice?"
-        session_scope: all
-        target_block: human
-        target_field: context_notes
-        merge_strategy: append
+[background_agents.triggers.idle]
+enabled = false  # Disabled for MVP
+threshold_minutes = 30
+cooldown_minutes = 60
 
-      - id: engagement_patterns
-        question: "How engaged is this student? What topics or activities seem to motivate them?"
-        session_scope: recent
-        recent_limit: 5
-        target_block: human
-        target_field: facts
-        merge_strategy: append
+# Query: Learning Style
+[[background_agents.queries]]
+id = "learning_style"
+question = "What learning style works best for this student? Do they prefer examples, theory, or hands-on practice?"
+session_scope = "all"
+target_block = "human"
+target_field = "context_notes"
+merge_strategy = "append"
 
-      - id: communication_style
-        question: "How should I adjust my communication style for this student? What tone resonates best?"
-        session_scope: all
-        target_block: persona
-        target_field: constraints
-        merge_strategy: llm_diff
+# Query: Engagement Patterns
+[[background_agents.queries]]
+id = "engagement_patterns"
+question = "How engaged is this student? What topics or activities seem to motivate them?"
+session_scope = "recent"
+recent_limit = 5
+target_block = "human"
+target_field = "facts"
+merge_strategy = "append"
+
+# Query: Communication Style
+[[background_agents.queries]]
+id = "communication_style"
+question = "How should I adjust my communication style for this student? What tone resonates best?"
+session_scope = "all"
+target_block = "persona"
+target_field = "constraints"
+merge_strategy = "llm_diff"
 ```
 
 #### 3. Background Worker Runner
@@ -1255,12 +1269,12 @@ class BackgroundAgentRunner:
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] YAML schema validation passes
+- [ ] TOML schema validation passes
 - [ ] Unit tests pass: `make test-agent`
 - [ ] Type checking passes: `make check-agent`
 
 #### Manual Verification:
-- [ ] Example YAML loads correctly
+- [ ] Example TOML loads correctly
 - [ ] Runner processes users and applies enrichments
 - [ ] Errors are properly logged and reported
 
@@ -1419,7 +1433,7 @@ async def list_background_agents() -> list[dict]:
 @router.post("/config/reload", response_model=ReloadResponse)
 async def reload_config(config_dir: str | None = None) -> ReloadResponse:
     """
-    Reload YAML configuration files.
+    Reload TOML configuration files.
 
     Args:
         config_dir: Optional path override
@@ -1484,7 +1498,7 @@ app.include_router(background_router)
 #### Manual Verification:
 - [ ] `GET /background/agents` lists configured agents
 - [ ] `POST /background/{agent_id}/run` executes and returns results
-- [ ] `POST /background/config/reload` reloads YAML without restart
+- [ ] `POST /background/config/reload` reloads TOML without restart
 - [ ] Errors are properly returned in response
 
 ---
@@ -1497,14 +1511,14 @@ app.include_router(background_router)
 - `tests/test_honcho_dialectic.py` - Dialectic query tests
 - `tests/test_tools.py` - Agent tool tests
 - `tests/test_memory_enricher.py` - Enricher tests
-- `tests/test_background_schema.py` - YAML schema tests
+- `tests/test_background_schema.py` - TOML schema tests
 - `tests/test_background_runner.py` - Runner tests
 
 **Key test cases:**
 - Dialectic query with different session scopes
 - Memory edit with each merge strategy
 - Protected field blocking
-- YAML validation errors
+- TOML validation errors
 - Runner error handling
 - Audit entry creation
 
@@ -1513,11 +1527,11 @@ app.include_router(background_router)
 - End-to-end: Agent calls `query_honcho` → receives insight
 - End-to-end: Agent calls `edit_memory_block` → memory updates
 - Background run: Runner processes user → enrichment applied
-- Config reload: YAML change → reflected in next run
+- Config reload: TOML change → reflected in next run
 
 ### Manual Testing Steps
 
-1. Start service with example YAML config
+1. Start service with example TOML config
 2. Create test user agent via `/agents`
 3. Send chat message that triggers `query_honcho` tool
 4. Verify insight returned in agent response
@@ -1525,7 +1539,7 @@ app.include_router(background_router)
 6. Verify memory block updated via `/agents/{id}`
 7. Trigger background agent via `/background/insight-harvester/run`
 8. Verify enrichments applied and audit entries created
-9. Modify YAML, call `/background/config/reload`
+9. Modify TOML, call `/background/config/reload`
 10. Verify new config reflected in `/background/agents`
 
 ---
@@ -1536,7 +1550,7 @@ app.include_router(background_router)
 
 ```toml
 # pyproject.toml additions
-pyyaml = "^6.0"
+tomli = "^2.0"  # TOML parser (only needed for Python < 3.11)
 apscheduler = "^3.10"  # For future scheduled triggers
 ```
 
@@ -1545,7 +1559,7 @@ apscheduler = "^3.10"  # For future scheduled triggers
 ```
 config/
   courses/
-    college-essay.yaml
+    college-essay.toml
 src/letta_starter/
   tools/
     __init__.py
