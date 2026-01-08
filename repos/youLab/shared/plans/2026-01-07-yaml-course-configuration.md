@@ -1,8 +1,8 @@
-# TOML Course Configuration Implementation Plan
+# YAML Course Configuration Implementation Plan
 
 ## Overview
 
-Move all course designer-configurable content from Python code to a single TOML file per course (`config/{course_id}.toml`). This enables non-developers to customize tutor personas, messages, and behavior without touching Python code.
+Move all course designer-configurable content from Python code to a single YAML file per course (`config/{course_id}.yaml`). This enables non-developers to customize tutor personas, messages, and behavior without touching Python code.
 
 ## Current State Analysis
 
@@ -14,17 +14,17 @@ All course configuration is currently embedded in Python:
 ### Key Discoveries:
 - `AgentTemplateRegistry` (`templates.py:50-76`) already supports dynamic registration
 - `PersonaBlock` and `HumanBlock` are Pydantic models with full validation
-- Sleep agents TOML schema already exists in `thoughts/shared/plans/` as a reference
-- Python 3.11+ includes `tomllib` in stdlib (read-only)
+- YAML is cleaner than TOML for nested structures (background tasks, lists)
+- PyYAML is already commonly used in Python projects
 
 ## Desired End State
 
 ```
 config/
-  college-essay.toml    # Complete config for essay coaching course
+  college-essay.yaml    # Complete config for essay coaching course
 ```
 
-A course designer can edit `config/college-essay.toml` to change:
+A course designer can edit `config/college-essay.yaml` to change:
 - Tutor name, role, tone, capabilities, constraints
 - Welcome messages, error messages
 - Background tasks (scheduled Honcho dialectic queries)
@@ -33,36 +33,44 @@ Changes take effect on service restart (no code changes needed).
 
 ### Verification:
 - `make verify-agent` passes
-- Service starts and loads config from TOML
-- Agent created via API uses TOML-defined persona
-- Error messages come from TOML
+- Service starts and loads config from YAML
+- Agent created via API uses YAML-defined persona
+- Error messages come from YAML
 
 ## What We're NOT Doing
 
 - Hot-reloading (restart required for config changes)
-- Admin UI for editing TOML
+- Admin UI for editing YAML
 - Multiple tutors per course (one tutor per course file)
 - Curriculum/lesson content (Phase 5 scope)
 - Environment-specific config overrides
 
 ## Implementation Approach
 
-Use Pydantic models to define the TOML schema, `tomllib` to parse, and modify `AgentTemplateRegistry` to load from config directory at startup.
+Use Pydantic models to define the schema, PyYAML to parse, and modify `AgentTemplateRegistry` to load from config directory at startup.
 
 ---
 
-## Phase 1: Define TOML Schema and Models
+## Phase 1: Define YAML Schema and Models
 
 ### Overview
-Create the TOML file format and corresponding Pydantic models for validation.
+Create the YAML file format and corresponding Pydantic models for validation.
 
 ### Changes Required:
 
-#### 1. Create TOML Schema Models
+#### 1. Add PyYAML Dependency
+**File**: `pyproject.toml`
+
+Add to dependencies:
+```toml
+"pyyaml>=6.0",
+```
+
+#### 2. Create Schema Models
 **File**: `src/letta_starter/config/course_config.py` (new)
 
 ```python
-"""Course configuration schema for TOML files."""
+"""Course configuration schema for YAML files."""
 
 from pydantic import BaseModel, Field
 
@@ -138,13 +146,19 @@ class BackgroundTasksConfig(BaseModel):
     tasks: list[BackgroundTask] = Field(default_factory=list)
 
 
-class CourseConfig(BaseModel):
-    """Complete course configuration loaded from TOML."""
+class CourseMetadata(BaseModel):
+    """Course metadata."""
 
-    # Course metadata
     id: str = Field(..., description="Course identifier (matches filename)")
     name: str = Field(..., description="Course display name")
     description: str = Field(default="")
+
+
+class CourseConfig(BaseModel):
+    """Complete course configuration loaded from YAML."""
+
+    # Course metadata
+    course: CourseMetadata
 
     # Tutor configuration
     tutor: TutorConfig
@@ -156,111 +170,103 @@ class CourseConfig(BaseModel):
     background_tasks: BackgroundTasksConfig = Field(default_factory=BackgroundTasksConfig)
 ```
 
-#### 2. Create Example TOML File
-**File**: `config/college-essay.toml` (new)
+#### 3. Create Example YAML File
+**File**: `config/college-essay.yaml` (new)
 
-```toml
+```yaml
 # College Essay Coaching Course Configuration
 # ============================================
 # This file configures the AI tutor for the college essay course.
 # Edit this file to customize tutor behavior without changing code.
 
-[course]
-id = "college-essay"
-name = "College Essay Mastery"
-description = "8-week college essay coaching program"
+course:
+  id: college-essay
+  name: College Essay Mastery
+  description: 8-week college essay coaching program
 
 # =============================================================================
 # TUTOR PERSONA
 # =============================================================================
 # Defines who the tutor is and how they interact with students.
 
-[tutor]
-name = "YouLab Essay Coach"
-role = "AI tutor specializing in college application essays"
-tone = "warm"           # Options: warm, professional, friendly, casual
-verbosity = "adaptive"  # Options: concise, detailed, adaptive
+tutor:
+  name: YouLab Essay Coach
+  role: AI tutor specializing in college application essays
+  tone: warm           # Options: warm, professional, friendly, casual
+  verbosity: adaptive  # Options: concise, detailed, adaptive
 
-capabilities = [
-    "Guide students through self-discovery exercises",
-    "Help brainstorm and develop essay topics",
-    "Provide constructive feedback on drafts",
-    "Support emotional journey of college applications",
-]
+  capabilities:
+    - Guide students through self-discovery exercises
+    - Help brainstorm and develop essay topics
+    - Provide constructive feedback on drafts
+    - Support emotional journey of college applications
 
-expertise = [
-    "College admissions",
-    "Personal narrative",
-    "Reflective writing",
-    "Strengths-based coaching",
-]
+  expertise:
+    - College admissions
+    - Personal narrative
+    - Reflective writing
+    - Strengths-based coaching
 
-# IMPORTANT: These constraints define what the tutor should NEVER do
-constraints = [
-    "Never write essays for students",
-    "Always ask clarifying questions before giving advice",
-    "Celebrate small wins and progress",
-]
+  # IMPORTANT: These constraints define what the tutor should NEVER do
+  constraints:
+    - Never write essays for students
+    - Always ask clarifying questions before giving advice
+    - Celebrate small wins and progress
 
 # =============================================================================
 # USER-FACING MESSAGES
 # =============================================================================
 # Customize the messages students see in various situations.
 
-[messages]
-welcome_first = """
-Welcome to YouLab! I'm your personal college essay coach.
+messages:
+  welcome_first: |
+    Welcome to YouLab! I'm your personal college essay coach.
 
-I'm here to help you discover your unique story and craft compelling essays.
-I won't write your essays for you, but I'll guide you every step of the way.
+    I'm here to help you discover your unique story and craft compelling essays.
+    I won't write your essays for you, but I'll guide you every step of the way.
 
-What would you like to work on today?
-"""
+    What would you like to work on today?
 
-welcome_returning = "Welcome back! Ready to continue working on your essay journey?"
+  welcome_returning: Welcome back! Ready to continue working on your essay journey?
 
-error_not_logged_in = "Please log in to access your personal essay coach."
-error_no_message = "I didn't catch that. Could you try sending your message again?"
-error_service_unavailable = "I'm taking a short break. Please try again in a moment."
-error_timeout = "That took longer than expected. Let's try again."
+  error_not_logged_in: Please log in to access your personal essay coach.
+  error_no_message: I didn't catch that. Could you try sending your message again?
+  error_service_unavailable: I'm taking a short break. Please try again in a moment.
+  error_timeout: That took longer than expected. Let's try again.
 
 # =============================================================================
 # BACKGROUND TASKS (Scheduled Memory Enrichment)
 # =============================================================================
 # Tasks that run in the background to enrich agent memory via Honcho dialectic.
 
-[background_tasks]
-scope = ["tutor"]  # Which agent types to run on
-batch_size = 50
+background_tasks:
+  scope:
+    - tutor  # Which agent types to run on
+  batch_size: 50
 
-# Daily insight gathering (3 AM)
-[[background_tasks.task]]
-trigger = "0 3 * * *"
+  tasks:
+    # Daily insight gathering (3 AM)
+    - trigger: "0 3 * * *"
+      human:
+        - query: What learning style works best for this student?
+          field: context_notes
+        - query: How engaged is this student? What motivates them?
+          field: context_notes
 
-[[background_tasks.task.human]]
-query = "What learning style works best for this student?"
-field = "context_notes"
+    # Idle-triggered mood check (30 min inactive)
+    - trigger:
+        idle_minutes: 30
+        cooldown: 60
+      human:
+        - query: Has this student's mood or engagement changed recently?
+          field: context_notes
 
-[[background_tasks.task.human]]
-query = "How engaged is this student? What motivates them?"
-field = "context_notes"
-
-# Idle-triggered mood check (30 min inactive)
-[[background_tasks.task]]
-trigger = { idle_minutes = 30, cooldown = 60 }
-
-[[background_tasks.task.human]]
-query = "Has this student's mood or engagement changed recently?"
-field = "context_notes"
-
-# Weekly progress summary (Monday 9 AM)
-[[background_tasks.task]]
-trigger = "0 9 * * 1"
-
-[[background_tasks.task.human]]
-query = "Summarize this student's progress over the past week."
-field = "facts"
-transform = "replace"
+    # Weekly progress summary (Monday 9 AM)
+    - trigger: "0 9 * * 1"
+      human:
+        - query: Summarize this student's progress over the past week.
+          field: facts
+          transform: replace
 ```
 
 ### Success Criteria:
@@ -271,7 +277,7 @@ transform = "replace"
 - [ ] New models importable: `python -c "from letta_starter.config.course_config import CourseConfig"`
 
 #### Manual Verification:
-- [ ] TOML file is readable by non-developers
+- [ ] YAML file is readable by non-developers
 - [ ] Comments explain each section clearly
 
 ---
@@ -279,7 +285,7 @@ transform = "replace"
 ## Phase 2: Create Config Loader
 
 ### Overview
-Add a loader that reads TOML files from `config/` directory and returns validated `CourseConfig` objects.
+Add a loader that reads YAML files from `config/` directory and returns validated `CourseConfig` objects.
 
 ### Changes Required:
 
@@ -287,13 +293,13 @@ Add a loader that reads TOML files from `config/` directory and returns validate
 **File**: `src/letta_starter/config/loader.py` (new)
 
 ```python
-"""Load course configurations from TOML files."""
+"""Load course configurations from YAML files."""
 
-import tomllib
 from functools import lru_cache
 from pathlib import Path
 
 import structlog
+import yaml
 
 from letta_starter.config.course_config import CourseConfig
 
@@ -304,7 +310,7 @@ CONFIG_DIR = Path(__file__).parent.parent.parent.parent / "config"
 
 
 class ConfigLoader:
-    """Loads and caches course configurations from TOML files."""
+    """Loads and caches course configurations from YAML files."""
 
     def __init__(self, config_dir: Path | None = None) -> None:
         self.config_dir = config_dir or CONFIG_DIR
@@ -315,26 +321,16 @@ class ConfigLoader:
         if course_id in self._cache:
             return self._cache[course_id]
 
-        config_path = self.config_dir / f"{course_id}.toml"
+        config_path = self.config_dir / f"{course_id}.yaml"
         if not config_path.exists():
             log.warning("config_not_found", course_id=course_id, path=str(config_path))
             return None
 
         try:
-            with config_path.open("rb") as f:
-                data = tomllib.load(f)
+            with config_path.open() as f:
+                data = yaml.safe_load(f)
 
-            # Flatten nested structure for Pydantic
-            config_data = {
-                "id": data.get("course", {}).get("id", course_id),
-                "name": data.get("course", {}).get("name", course_id),
-                "description": data.get("course", {}).get("description", ""),
-                "tutor": data.get("tutor", {}),
-                "messages": data.get("messages", {}),
-                "background_tasks": data.get("background_tasks", {}),
-            }
-
-            config = CourseConfig(**config_data)
+            config = CourseConfig(**data)
             self._cache[course_id] = config
             log.info("config_loaded", course_id=course_id)
             return config
@@ -350,7 +346,7 @@ class ConfigLoader:
             log.warning("config_dir_not_found", path=str(self.config_dir))
             return configs
 
-        for config_file in self.config_dir.glob("*.toml"):
+        for config_file in self.config_dir.glob("*.yaml"):
             course_id = config_file.stem
             config = self.load(course_id)
             if config:
@@ -384,6 +380,7 @@ from letta_starter.config.course_config import (
     BackgroundTask,
     BackgroundTasksConfig,
     CourseConfig,
+    CourseMetadata,
     MessagesConfig,
     TaskQuery,
     TutorConfig,
@@ -396,6 +393,7 @@ __all__ = [
     "BackgroundTasksConfig",
     "ConfigLoader",
     "CourseConfig",
+    "CourseMetadata",
     "MessagesConfig",
     "ServiceSettings",
     "Settings",
@@ -414,7 +412,6 @@ __all__ = [
 """Tests for course configuration loader."""
 
 from pathlib import Path
-from tempfile import TemporaryDirectory
 
 import pytest
 
@@ -426,23 +423,23 @@ class TestConfigLoader:
     """Tests for ConfigLoader."""
 
     def test_load_valid_config(self, tmp_path: Path) -> None:
-        """Test loading a valid TOML config."""
-        config_content = '''
-[course]
-id = "test-course"
-name = "Test Course"
+        """Test loading a valid YAML config."""
+        config_content = """
+course:
+  id: test-course
+  name: Test Course
 
-[tutor]
-name = "Test Tutor"
-role = "Test role"
-'''
-        (tmp_path / "test-course.toml").write_text(config_content)
+tutor:
+  name: Test Tutor
+  role: Test role
+"""
+        (tmp_path / "test-course.yaml").write_text(config_content)
 
         loader = ConfigLoader(config_dir=tmp_path)
         config = loader.load("test-course")
 
         assert config is not None
-        assert config.id == "test-course"
+        assert config.course.id == "test-course"
         assert config.tutor.name == "Test Tutor"
 
     def test_load_missing_config(self, tmp_path: Path) -> None:
@@ -453,16 +450,16 @@ role = "Test role"
 
     def test_load_caches_config(self, tmp_path: Path) -> None:
         """Test that configs are cached."""
-        config_content = '''
-[course]
-id = "cached"
-name = "Cached"
+        config_content = """
+course:
+  id: cached
+  name: Cached
 
-[tutor]
-name = "Tutor"
-role = "Role"
-'''
-        (tmp_path / "cached.toml").write_text(config_content)
+tutor:
+  name: Tutor
+  role: Role
+"""
+        (tmp_path / "cached.yaml").write_text(config_content)
 
         loader = ConfigLoader(config_dir=tmp_path)
         config1 = loader.load("cached")
@@ -473,16 +470,16 @@ role = "Role"
     def test_load_all(self, tmp_path: Path) -> None:
         """Test loading all configs from directory."""
         for name in ["course1", "course2"]:
-            content = f'''
-[course]
-id = "{name}"
-name = "{name}"
+            content = f"""
+course:
+  id: {name}
+  name: {name}
 
-[tutor]
-name = "Tutor"
-role = "Role"
-'''
-            (tmp_path / f"{name}.toml").write_text(content)
+tutor:
+  name: Tutor
+  role: Role
+"""
+            (tmp_path / f"{name}.yaml").write_text(content)
 
         loader = ConfigLoader(config_dir=tmp_path)
         configs = loader.load_all()
@@ -490,6 +487,42 @@ role = "Role"
         assert len(configs) == 2
         assert "course1" in configs
         assert "course2" in configs
+
+    def test_load_with_background_tasks(self, tmp_path: Path) -> None:
+        """Test loading config with background tasks."""
+        config_content = """
+course:
+  id: with-tasks
+  name: With Tasks
+
+tutor:
+  name: Tutor
+  role: Role
+
+background_tasks:
+  scope:
+    - tutor
+  tasks:
+    - trigger: "0 3 * * *"
+      human:
+        - query: What motivates this student?
+          field: context_notes
+    - trigger:
+        idle_minutes: 30
+        cooldown: 60
+      human:
+        - query: Check engagement
+          field: context_notes
+"""
+        (tmp_path / "with-tasks.yaml").write_text(config_content)
+
+        loader = ConfigLoader(config_dir=tmp_path)
+        config = loader.load("with-tasks")
+
+        assert config is not None
+        assert len(config.background_tasks.tasks) == 2
+        assert config.background_tasks.tasks[0].trigger == "0 3 * * *"
+        assert config.background_tasks.tasks[1].trigger.idle_minutes == 30
 ```
 
 ### Success Criteria:
@@ -499,14 +532,14 @@ role = "Role"
 - [ ] Type checking passes: `make check-agent`
 
 #### Manual Verification:
-- [ ] Loader successfully reads `config/college-essay.toml`
+- [ ] Loader successfully reads `config/college-essay.yaml`
 
 ---
 
 ## Phase 3: Integrate with Agent Templates
 
 ### Overview
-Modify `AgentTemplateRegistry` to load templates from TOML configs instead of hardcoded Python.
+Modify `AgentTemplateRegistry` to load templates from YAML configs instead of hardcoded Python.
 
 ### Changes Required:
 
@@ -538,9 +571,9 @@ class AgentTemplate(BaseModel):
 def _course_config_to_template(config: CourseConfig) -> AgentTemplate:
     """Convert a CourseConfig to an AgentTemplate."""
     return AgentTemplate(
-        type_id=config.id,
-        display_name=config.name,
-        description=config.description,
+        type_id=config.course.id,
+        display_name=config.course.name,
+        description=config.course.description,
         persona=PersonaBlock(
             name=config.tutor.name,
             role=config.tutor.role,
@@ -562,7 +595,7 @@ class AgentTemplateRegistry:
         self._load_from_config()
 
     def _load_from_config(self) -> None:
-        """Load templates from TOML config files."""
+        """Load templates from YAML config files."""
         loader = get_config_loader()
         configs = loader.load_all()
 
@@ -600,7 +633,7 @@ templates = AgentTemplateRegistry()
 #### 2. Update Tests
 **File**: `tests/test_templates.py`
 
-Update tests to work with TOML-loaded templates:
+Update tests to work with YAML-loaded templates:
 
 ```python
 """Tests for agent templates."""
@@ -614,7 +647,7 @@ from letta_starter.agents.templates import (
     AgentTemplateRegistry,
     _course_config_to_template,
 )
-from letta_starter.config.course_config import CourseConfig, TutorConfig
+from letta_starter.config.course_config import CourseConfig, CourseMetadata, TutorConfig
 from letta_starter.config.loader import ConfigLoader
 from letta_starter.memory.blocks import HumanBlock, PersonaBlock
 
@@ -641,9 +674,11 @@ class TestCourseConfigToTemplate:
     def test_converts_tutor_config(self) -> None:
         """Test converting CourseConfig to AgentTemplate."""
         config = CourseConfig(
-            id="test-course",
-            name="Test Course",
-            description="Test description",
+            course=CourseMetadata(
+                id="test-course",
+                name="Test Course",
+                description="Test description",
+            ),
             tutor=TutorConfig(
                 name="Test Tutor",
                 role="Test role",
@@ -666,17 +701,16 @@ class TestAgentTemplateRegistry:
 
     def test_loads_from_config_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test registry loads templates from config directory."""
-        # Create test config
-        config_content = '''
-[course]
-id = "test"
-name = "Test"
+        config_content = """
+course:
+  id: test
+  name: Test
 
-[tutor]
-name = "Test Tutor"
-role = "Test role"
-'''
-        (tmp_path / "test.toml").write_text(config_content)
+tutor:
+  name: Test Tutor
+  role: Test role
+"""
+        (tmp_path / "test.yaml").write_text(config_content)
 
         # Patch the config loader
         from letta_starter.config import loader
@@ -713,16 +747,16 @@ role = "Test role"
 #### Manual Verification:
 - [ ] Start service: `uv run letta-server`
 - [ ] Create agent via API: `curl -X POST http://localhost:8100/agents -d '{"user_id": "test", "agent_type": "college-essay"}'`
-- [ ] Verify agent uses persona from TOML
+- [ ] Verify agent uses persona from YAML
 
-**Implementation Note**: After completing this phase and all automated verification passes, pause here for manual confirmation that agents are created with TOML-configured personas before proceeding to the next phase.
+**Implementation Note**: After completing this phase and all automated verification passes, pause here for manual confirmation that agents are created with YAML-configured personas before proceeding to the next phase.
 
 ---
 
 ## Phase 4: Integrate Messages
 
 ### Overview
-Make the pipeline use messages from TOML config instead of hardcoded strings.
+Make the pipeline use messages from YAML config instead of hardcoded strings.
 
 ### Changes Required:
 
@@ -732,6 +766,8 @@ Make the pipeline use messages from TOML config instead of hardcoded strings.
 Add convenience function:
 
 ```python
+from letta_starter.config.course_config import MessagesConfig
+
 def get_messages(course_id: str) -> MessagesConfig | None:
     """Get messages config for a course."""
     config = load_course_config(course_id)
@@ -768,19 +804,19 @@ def _get_message(self, key: str, default: str) -> str:
 - [ ] Type checking passes: `make check-agent`
 
 #### Manual Verification:
-- [ ] Modify `config/college-essay.toml` messages section
+- [ ] Modify `config/college-essay.yaml` messages section
 - [ ] Restart service
 - [ ] Trigger error condition
 - [ ] Verify custom message appears
 
-**Implementation Note**: After completing this phase and all automated verification passes, pause here for manual confirmation that messages from TOML appear correctly before proceeding to the next phase.
+**Implementation Note**: After completing this phase and all automated verification passes, pause here for manual confirmation that messages from YAML appear correctly before proceeding to the next phase.
 
 ---
 
 ## Phase 5: Documentation and Cleanup
 
 ### Overview
-Document the TOML configuration system and remove legacy code.
+Document the YAML configuration system and remove legacy code.
 
 ### Changes Required:
 
@@ -788,7 +824,7 @@ Document the TOML configuration system and remove legacy code.
 **File**: `docs/Configuration.md` (new)
 
 Create documentation for course designers explaining:
-- TOML file structure
+- YAML file structure
 - Each configuration section
 - How to create a new course
 - Common customizations
@@ -796,10 +832,10 @@ Create documentation for course designers explaining:
 #### 2. Remove Legacy Hardcoded Template
 **File**: `src/letta_starter/agents/templates.py`
 
-Remove `TUTOR_TEMPLATE` constant (now loaded from TOML).
+Remove `TUTOR_TEMPLATE` constant (now loaded from YAML).
 
 #### 3. Update CLAUDE.md
-Add note about `config/` directory and TOML configuration.
+Add note about `config/` directory and YAML configuration.
 
 ### Success Criteria:
 
@@ -809,24 +845,24 @@ Add note about `config/` directory and TOML configuration.
 
 #### Manual Verification:
 - [ ] Documentation is clear for non-developers
-- [ ] Course designer can create new course by copying and editing TOML
+- [ ] Course designer can create new course by copying and editing YAML
 
 ---
 
 ## Testing Strategy
 
 ### Unit Tests:
-- `test_config_loader.py` - TOML parsing, caching, error handling
+- `test_config_loader.py` - YAML parsing, caching, error handling
 - `test_templates.py` - Config to template conversion, registry loading
 - `test_course_config.py` - Pydantic model validation
 
 ### Integration Tests:
 - Service startup loads configs
-- Agent creation uses TOML personas
-- Messages come from TOML
+- Agent creation uses YAML personas
+- Messages come from YAML
 
 ### Manual Testing Steps:
-1. Edit `config/college-essay.toml` tutor name
+1. Edit `config/college-essay.yaml` tutor name
 2. Restart service
 3. Create new agent
 4. Verify agent has new tutor name
@@ -842,12 +878,11 @@ Add note about `config/` directory and TOML configuration.
 ## Migration Notes
 
 - Existing agents keep their current persona (stored in Letta)
-- New agents get TOML-configured persona
+- New agents get YAML-configured persona
 - No migration needed for existing data
 
 ## References
 
 - TOML configuration research: `thoughts/shared/research/2026-01-07-toml-configuration-opportunities.md`
-- Background tasks TOML schema: `thoughts/shared/plans/2026-01-07-background-agents-schema.toml`
 - Current templates: `src/letta_starter/agents/templates.py`
 - Roadmap Phase 5: `docs/Roadmap.md` (curriculum parser)
