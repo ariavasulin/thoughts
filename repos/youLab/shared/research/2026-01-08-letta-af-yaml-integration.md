@@ -319,8 +319,194 @@ Import:     .af → client.agents.import_file() → Running agent
 - [Agent File GitHub Repository](https://github.com/letta-ai/agent-file)
 - [Letta Blog: Introducing Agent File](https://www.letta.com/blog/agent-file)
 
+## Extended YAML Schema Proposal
+
+Based on your request to configure all Letta agent properties in YAML, here's a comprehensive schema that maps to the Letta API:
+
+### Complete YAML Schema
+
+```yaml
+# config/college-essay.yaml
+# =============================================================================
+# COURSE METADATA
+# =============================================================================
+course:
+  id: college-essay
+  name: College Essay Mastery
+  description: 8-week college essay coaching program
+
+# =============================================================================
+# LETTA AGENT CONFIGURATION
+# =============================================================================
+# These fields map directly to client.agents.create() parameters
+
+agent:
+  # Model configuration (currently hardcoded in agents.py:110-111)
+  model: openai/gpt-4o-mini
+  embedding: openai/text-embedding-3-small
+
+  # System prompt - injected into Letta's system prompt
+  # This is SEPARATE from the persona block
+  system_prompt: |
+    You are a college essay coach. Your job is to guide students through
+    self-discovery and help them craft authentic personal narratives.
+
+    IMPORTANT GUIDELINES:
+    - Never write essays for students
+    - Use Socratic questioning
+    - Celebrate progress and small wins
+
+  # Memory blocks - defines what goes into agent's editable memory
+  memory_blocks:
+    persona:
+      name: YouLab Essay Coach
+      role: AI tutor specializing in college application essays
+      tone: warm
+      verbosity: adaptive
+      capabilities:
+        - Guide students through self-discovery exercises
+        - Help brainstorm and develop essay topics
+        - Provide constructive feedback on drafts
+      expertise:
+        - College admissions
+        - Personal narrative
+        - Reflective writing
+      constraints:
+        - Never write essays for students
+        - Always ask clarifying questions before giving advice
+
+    human:
+      # Initial human block (empty by default, populated during onboarding)
+      name: null
+      role: student
+
+  # Tools - list of tool names to attach
+  tools:
+    - send_message        # Default, always included
+    - conversation_search # Search conversation history
+    - archival_memory_insert
+    - archival_memory_search
+    # - web_search        # Uncomment if TAVILY_API_KEY is set
+    # - run_code          # Uncomment if E2B_API_KEY is set
+
+  # Tool rules - control agent execution flow
+  tool_rules:
+    - tool_name: send_message
+      type: exit_loop      # Terminal - agent stops after sending message
+
+    # Example: require web_search before answering factual questions
+    # - tool_name: web_search
+    #   type: max_count_per_step
+    #   max_count: 3
+
+  # Secrets - tool-specific API keys (optional)
+  secrets:
+    # TAVILY_API_KEY: ${TAVILY_API_KEY}  # Reference env var
+    # E2B_API_KEY: ${E2B_API_KEY}
+
+# =============================================================================
+# APP-SPECIFIC CONFIGURATION (Not part of Letta)
+# =============================================================================
+
+messages:
+  welcome_first: |
+    Welcome to YouLab! I'm your personal college essay coach.
+    What would you like to work on today?
+  welcome_returning: Welcome back! Ready to continue your essay journey?
+  error_not_logged_in: Please log in to access your coach.
+  error_service_unavailable: I'm taking a short break. Please try again.
+
+background_tasks:
+  scope: [tutor]
+  batch_size: 50
+  tasks:
+    - trigger: "0 3 * * *"
+      human:
+        - query: What learning style works best for this student?
+          field: context_notes
+```
+
+### Field Mapping to Letta API
+
+| YAML Field | Letta API Parameter | Notes |
+|------------|---------------------|-------|
+| `agent.model` | `model` | Currently hardcoded in `agents.py:110` |
+| `agent.embedding` | `embedding` | Currently hardcoded in `agents.py:111` |
+| `agent.system_prompt` | `system` | NEW - not currently used |
+| `agent.memory_blocks.persona` | `memory_blocks[0]` | Via `PersonaBlock.to_memory_string()` |
+| `agent.memory_blocks.human` | `memory_blocks[1]` | Via `HumanBlock.to_memory_string()` |
+| `agent.tools` | `tools` | NEW - not currently used |
+| `agent.tool_rules` | `tool_rules` | NEW - not currently used |
+| `agent.secrets` | `secrets` | NEW - not currently used |
+
+### Implementation Changes Required
+
+**1. Extend `CourseConfig` schema** (`config/course_config.py`):
+
+```python
+class AgentConfig(BaseModel):
+    """Letta agent configuration."""
+    model: str = "openai/gpt-4o-mini"
+    embedding: str = "openai/text-embedding-3-small"
+    system_prompt: str | None = None
+    memory_blocks: MemoryBlocksConfig
+    tools: list[str] = Field(default_factory=lambda: ["send_message"])
+    tool_rules: list[ToolRuleConfig] = Field(default_factory=list)
+    secrets: dict[str, str] = Field(default_factory=dict)
+
+class ToolRuleConfig(BaseModel):
+    """Tool rule configuration."""
+    tool_name: str
+    type: Literal["exit_loop", "run_first", "continue_loop", "max_count_per_step"]
+    max_count: int | None = None  # For max_count_per_step
+    children: list[str] | None = None  # For child rules
+
+class MemoryBlocksConfig(BaseModel):
+    """Memory blocks configuration."""
+    persona: TutorConfig  # Reuse existing TutorConfig
+    human: HumanBlockConfig = Field(default_factory=HumanBlockConfig)
+```
+
+**2. Update `AgentManager.create_agent()`** (`server/agents.py`):
+
+```python
+def create_agent(self, user_id: str, agent_type: str = "tutor", ...) -> str:
+    config = load_course_config(agent_type)
+
+    agent = self.client.agents.create(
+        name=agent_name,
+        model=config.agent.model,                    # From YAML
+        embedding=config.agent.embedding,            # From YAML
+        system=config.agent.system_prompt,           # NEW
+        memory_blocks=[
+            {"label": "persona", "value": persona_block.to_memory_string()},
+            {"label": "human", "value": human_block.to_memory_string()},
+        ],
+        tools=config.agent.tools,                    # NEW
+        tool_rules=[                                 # NEW
+            {"tool_name": r.tool_name, "type": r.type, ...}
+            for r in config.agent.tool_rules
+        ],
+        secrets=config.agent.secrets,                # NEW
+        metadata=metadata,
+    )
+```
+
+### Comparison: Your YAML vs AF
+
+| Aspect | Your YAML | AF (.af) |
+|--------|-----------|----------|
+| Purpose | Template for creating agents | Snapshot of existing agent |
+| State | Stateless config | Includes message history |
+| Tools | References by name | Includes full source code |
+| System prompt | Configurable | Captured at export time |
+| Memory blocks | Template values | Current state values |
+| Format | YAML (human-editable) | JSON (machine-portable) |
+
+**Your YAML is the "factory config" - AF is the "serialized instance".**
+
 ## Open Questions
 
-1. **Tool Configuration**: When you add custom tools, should they be defined in YAML or registered programmatically?
-2. **Model per Course**: Should different courses use different models? (Currently hardcoded to gpt-4o-mini)
-3. **AF Export**: Would an agent export feature be useful for debugging or user data portability?
+1. **Custom Tools**: Should YAML reference tools by name (requiring separate registration) or include tool definitions inline?
+2. **System Prompt vs Persona**: Should system_prompt be separate or merged with persona block content?
+3. **Secrets Management**: Should secrets reference env vars (`${VAR}`) or be stored elsewhere?
