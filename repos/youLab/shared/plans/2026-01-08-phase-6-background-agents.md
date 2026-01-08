@@ -863,8 +863,8 @@ class MemoryEnricher:
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] Unit tests pass: `make test-agent`
-- [ ] Type checking passes: `make check-agent`
+- [x] Unit tests pass: `make test-agent`
+- [x] Type checking passes: `make check-agent`
 
 #### Manual Verification:
 - [ ] `MemoryEnricher.enrich()` updates target agent's memory
@@ -1269,9 +1269,9 @@ class BackgroundAgentRunner:
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] TOML schema validation passes
-- [ ] Unit tests pass: `make test-agent`
-- [ ] Type checking passes: `make check-agent`
+- [x] TOML schema validation passes
+- [x] Unit tests pass: `make test-agent`
+- [x] Type checking passes: `make check-agent`
 
 #### Manual Verification:
 - [ ] Example TOML loads correctly
@@ -1492,8 +1492,8 @@ app.include_router(background_router)
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] All tests pass: `make verify-agent`
-- [ ] OpenAPI schema includes new endpoints
+- [x] All tests pass: `make verify-agent`
+- [x] OpenAPI schema includes new endpoints
 
 #### Manual Verification:
 - [ ] `GET /background/agents` lists configured agents
