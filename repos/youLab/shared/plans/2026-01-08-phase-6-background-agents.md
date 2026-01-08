@@ -595,9 +595,9 @@ async def chat_stream(request: ChatRequest):
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] Unit tests for tools pass: `make test-agent`
-- [ ] Type checking passes: `make check-agent`
-- [ ] Tools register correctly with Letta agent
+- [x] Unit tests for tools pass: `make test-agent`
+- [x] Type checking passes: `make check-agent`
+- [x] Tools register correctly with Letta agent
 
 #### Manual Verification:
 - [ ] Agent can call `query_honcho` and receive insight

@@ -27,7 +27,7 @@
 clinit() {
     local brain="$HOME/git/brain"
     [[ ! -d "$brain" ]] && echo "brain not found" && return 1
-    [[ "$(pwd)" == "$brain" ]] && echo "already in brain" && return 1
+    [[ "$(pwd)/" == "$brain/"* ]] && echo "already in brain" && return 1
 
     if [[ -L "hack" ]]; then
         echo "✓ hack"
