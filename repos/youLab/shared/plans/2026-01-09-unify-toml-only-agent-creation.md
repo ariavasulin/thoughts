@@ -162,9 +162,9 @@ error_unavailable = "I'm having a moment - please try again in a few seconds."
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] File exists: `config/courses/default/course.toml`
-- [ ] TOML parses without errors: `python -c "import tomllib; tomllib.load(open('config/courses/default/course.toml', 'rb'))"`
-- [ ] Curriculum loader loads it: `python -c "from letta_starter.curriculum import curriculum; curriculum.initialize('config/courses'); print(curriculum.get('default'))"`
+- [x] File exists: `config/courses/default/course.toml`
+- [x] TOML parses without errors: `python -c "import tomllib; tomllib.load(open('config/courses/default/course.toml', 'rb'))"`
+- [x] Curriculum loader loads it: `python -c "from letta_starter.curriculum import curriculum; curriculum.initialize('config/courses'); print(curriculum.get('default'))"`
 
 #### Manual Verification:
 - [ ] Review course.toml content matches intended defaults
