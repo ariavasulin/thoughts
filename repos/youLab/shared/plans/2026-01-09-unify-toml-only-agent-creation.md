@@ -231,13 +231,13 @@ The method already uses `course_id` as `agent_type` for caching (line 158). No c
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Linting passes: `make lint-fix`
-- [ ] Type checking passes: `make check-agent`
-- [ ] Unit tests pass: `make test-agent`
+- [x] Linting passes: `make lint-fix`
+- [x] Type checking passes: `make check-agent`
+- [x] Unit tests pass: `make test-agent`
 
 #### Manual Verification:
-- [ ] Create agent via API: `curl -X POST localhost:8100/agents -d '{"user_id": "test1"}'`
-- [ ] Agent uses default course config (check model, system prompt in Letta)
+- [x] Create agent via API: `curl -X POST localhost:8100/agents -d '{"user_id": "test1"}'`
+- [x] Agent uses default course config (check model, system prompt in Letta)
 
 **Implementation Note**: After completing this phase and all automated verification passes, pause here for manual confirmation before proceeding.
 
