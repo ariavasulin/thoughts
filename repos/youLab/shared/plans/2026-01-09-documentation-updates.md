@@ -177,7 +177,7 @@ Query Honcho dialectic and update agent memory on schedule or manual trigger.
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] No markdown syntax errors: `npx markdownlint docs/README.md docs/Roadmap.md`
+- [x] No markdown syntax errors: `npx markdownlint docs/README.md docs/Roadmap.md`
 
 #### Manual Verification:
 - [ ] README.md and Roadmap.md phase tables are identical
@@ -271,7 +271,7 @@ config/
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] All documented directories exist: `test -d src/letta_starter/curriculum`
+- [x] All documented directories exist: `test -d src/letta_starter/curriculum`
 
 #### Manual Verification:
 - [ ] Project structure matches actual filesystem
@@ -420,7 +420,7 @@ This method:
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] All documented endpoints exist in router
+- [x] All documented endpoints exist in router
 
 #### Manual Verification:
 - [ ] Endpoint signatures match implementation
@@ -451,7 +451,7 @@ To:
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Function exists at documented lines: `sed -n '310,363p' src/letta_starter/honcho/client.py | grep -q "create_persist_task"`
+- [x] Function exists at documented lines: `sed -n '310,363p' src/letta_starter/honcho/client.py | grep -q "create_persist_task"`
 
 ---
 
@@ -543,7 +543,7 @@ set_user_context(agent_id="agent-abc", user_id="user123")
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Linting passes on all markdown files
+- [x] Linting passes on all markdown files
 
 #### Manual Verification:
 - [ ] All documented fields exist in code
@@ -600,7 +600,7 @@ Add notice at top:
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Documentation files exist and are valid markdown
+- [x] Documentation files exist and are valid markdown
 
 #### Manual Verification:
 - [ ] Deprecation notices are clear and point to correct replacements

@@ -420,10 +420,10 @@ And update logging/result to use the passed `agent_id` instead of `config.id`.
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] File deleted: `! test -f src/letta_starter/background/schema.py`
-- [ ] Linting passes: `make lint-fix`
-- [ ] Type checking passes: `make check-agent`
-- [ ] All tests pass: `make test-agent`
+- [x] File deleted: `! test -f src/letta_starter/background/schema.py`
+- [x] Linting passes: `make lint-fix`
+- [x] Type checking passes: `make check-agent`
+- [x] All tests pass: `make test-agent`
 
 #### Manual Verification:
 - [ ] Background agent list endpoint works: `curl localhost:8100/background/agents`
@@ -565,12 +565,12 @@ def __init__(self, ...):
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Linting passes: `make lint-fix`
-- [ ] Type checking passes: `make check-agent`
-- [ ] Tests pass (with deprecation warnings): `make test-agent`
+- [x] Linting passes: `make lint-fix`
+- [x] Type checking passes: `make check-agent`
+- [x] Tests pass (with deprecation warnings): `make test-agent`
 
 #### Manual Verification:
-- [ ] Importing deprecated modules shows warnings: `python -W default -c "from letta_starter.agents.templates import templates"`
+- [x] Importing deprecated modules shows warnings: `python -W default -c "from letta_starter.agents.templates import templates"`
 
 ---
 
@@ -709,11 +709,11 @@ Add documentation for default course and note that it's the base configuration.
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Documentation files updated
-- [ ] No broken links in docs
+- [x] Documentation files updated
+- [x] No broken links in docs
 
 #### Manual Verification:
-- [ ] Review updated documentation for accuracy
+- [x] Review updated documentation for accuracy
 
 ---
 
