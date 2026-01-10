@@ -91,11 +91,11 @@ class ModuleConfig(BaseModel):
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Type checking passes: `make check-agent`
-- [ ] Linting passes: `make lint-fix`
+- [x] Type checking passes: `make check-agent`
+- [x] Linting passes: `make lint-fix`
 
 #### Manual Verification:
-- [ ] None required for this phase
+- [x] None required for this phase
 
 ---
 
@@ -182,8 +182,8 @@ def _load_modules(self, course_dir: Path, module_names: list[str]) -> list[Modul
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Type checking passes: `make check-agent`
-- [ ] Linting passes: `make lint-fix`
+- [x] Type checking passes: `make check-agent`
+- [x] Linting passes: `make lint-fix`
 
 ---
 
@@ -220,8 +220,8 @@ __all__ = [
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Type checking passes: `make check-agent`
-- [ ] Linting passes: `make lint-fix`
+- [x] Type checking passes: `make check-agent`
+- [x] Linting passes: `make lint-fix`
 
 ---
 
@@ -261,8 +261,8 @@ modules = [
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Type checking passes: `make check-agent`
-- [ ] Linting passes: `make lint-fix`
+- [x] Type checking passes: `make check-agent`
+- [x] Linting passes: `make lint-fix`
 
 ---
 
@@ -288,8 +288,8 @@ Update all module TOML files to use `[[steps]]` syntax.
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] No `[[lessons]]` in TOML files: `grep -r "\[\[lessons\]\]" config/courses/`
-- [ ] Course loads successfully: Test via HTTP endpoint or unit test
+- [x] No `[[lessons]]` in TOML files: `grep -r "\[\[lessons\]\]" config/courses/`
+- [x] Course loads successfully: Test via HTTP endpoint or unit test
 
 ---
 
@@ -312,7 +312,7 @@ Update the config schema documentation.
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] No "[[lessons]]" in docs: `grep "\[\[lessons\]\]" docs/config-schema.md`
+- [x] No "[[lessons]]" in docs: `grep "\[\[lessons\]\]" docs/config-schema.md`
 
 #### Manual Verification:
 - [ ] Documentation renders correctly and is consistent
@@ -327,9 +327,9 @@ Ensure all tests pass and no "Lesson" references remain (except historical comme
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Full verification: `make verify-agent`
-- [ ] No stale references: `grep -r "LessonConfig\|LessonAgent\|LessonCompletion" src/`
-- [ ] TOML files clean: `grep -r "\[\[lessons\]\]" config/`
+- [x] Full verification: `make verify-agent`
+- [x] No stale references: `grep -r "LessonConfig\|LessonAgent\|LessonCompletion" src/`
+- [x] TOML files clean: `grep -r "\[\[lessons\]\]" config/`
 
 #### Manual Verification:
 - [ ] Start server and hit `/curriculum/courses/college-essay` endpoint
