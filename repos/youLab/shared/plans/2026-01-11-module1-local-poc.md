@@ -237,8 +237,8 @@ Rename `_ensure_folder` to `ensure_folder` (remove underscore) to make it part o
 ### Success Criteria
 
 #### Automated
-- [ ] `make verify-agent` passes
-- [ ] Agent creation includes folder attachment
+- [x] `make verify-agent` passes
+- [x] Agent creation includes folder attachment
 
 #### Manual
 - [ ] Create new agent → folders appear in Letta ADE
