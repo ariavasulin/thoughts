@@ -145,9 +145,9 @@ def test_with_custom_settings():
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Docs site builds: `npx serve docs` and visit http://localhost:3000
-- [ ] No broken links in Configuration.md
-- [ ] Settings.md is deleted
+- [x] Docs site builds: `npx serve docs` and visit http://localhost:3000
+- [x] No broken links in Configuration.md
+- [x] Settings.md is deleted
 
 #### Manual Verification:
 - [ ] Configuration.md contains all env var tables
@@ -374,9 +374,9 @@ Recommended extensions: Python, Pylance, Ruff
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Docs site builds without errors
-- [ ] Testing.md and Tooling.md deleted
-- [ ] No broken links
+- [x] Docs site builds without errors
+- [x] Testing.md and Tooling.md deleted
+- [x] No broken links
 
 #### Manual Verification:
 - [ ] Development.md is comprehensive but navigable
@@ -521,8 +521,8 @@ agent = await manager.create_agent(user_id, config)
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Docs site builds
-- [ ] No broken internal links
+- [x] Docs site builds
+- [x] No broken internal links
 
 #### Manual Verification:
 - [ ] Current AgentManager API is clear
@@ -653,8 +653,8 @@ This format:
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Docs site builds
-- [ ] No broken internal links
+- [x] Docs site builds
+- [x] No broken internal links
 
 #### Manual Verification:
 - [ ] Current TOML-based approach is clear
@@ -828,9 +828,9 @@ Remove Strategy-Agent.md entry.
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Docs site builds
-- [ ] Strategy-Agent.md deleted
-- [ ] No broken links
+- [x] Docs site builds
+- [x] Strategy-Agent.md deleted
+- [x] No broken links
 
 #### Manual Verification:
 - [ ] Implementation details preserved
@@ -1221,10 +1221,10 @@ Replace 7 Letta entries with 2 new ones.
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Docs site builds
-- [ ] All 7 old Letta files deleted
-- [ ] 2 new Letta files created
-- [ ] No broken links
+- [x] Docs site builds
+- [x] All 7 old Letta files deleted
+- [x] 2 new Letta files created
+- [x] No broken links
 
 #### Manual Verification:
 - [ ] Letta-Integration.md covers YouLab-specific patterns
@@ -1338,9 +1338,9 @@ Remove Changelog.md entry.
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Docs site builds
-- [ ] Changelog.md deleted
-- [ ] No broken links
+- [x] Docs site builds
+- [x] Changelog.md deleted
+- [x] No broken links
 
 #### Manual Verification:
 - [ ] Current phase is prominent
@@ -1422,8 +1422,8 @@ Add "Start Here" section:
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Docs site builds
-- [ ] All sidebar links work
+- [x] Docs site builds
+- [x] All sidebar links work
 
 #### Manual Verification:
 - [ ] Navigation is logical and scannable
@@ -1450,12 +1450,12 @@ Add "Start Here" section:
 
 After all phases complete:
 
-- [ ] File count: 29 → 18 (11 files deleted)
-- [ ] Total size reduction: ~55KB removed
-- [ ] No broken links
-- [ ] Sidebar updated
-- [ ] All deprecated content removed or summarized
-- [ ] All current content preserved
+- [x] File count: 29 → 18 (11 files deleted)
+- [x] Total size reduction: ~55KB removed
+- [x] No broken links
+- [x] Sidebar updated
+- [x] All deprecated content removed or summarized
+- [x] All current content preserved
 
 ### Final File List
 
