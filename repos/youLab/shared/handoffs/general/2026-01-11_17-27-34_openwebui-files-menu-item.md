@@ -6,13 +6,13 @@ branch: main
 repository: YouLab
 topic: "OpenWebUI Files Menu Item Implementation"
 tags: [implementation, openwebui, sidebar, svelte]
-status: in_progress
+status: ready_for_verification
 last_updated: 2026-01-11
-last_updated_by: ariasulin
+last_updated_by: claude
 type: implementation_strategy
 ---
 
-# Handoff: OpenWebUI Files Menu Item - Docker Build Blocked
+# Handoff: OpenWebUI Files Menu Item - Ready for Verification
 
 ## Task(s)
 
@@ -22,7 +22,7 @@ type: implementation_strategy
 |-------|--------|-------|
 | Phase 1: Modify Sidebar Component | Complete | Added Files menu item to both collapsed and expanded views |
 | Phase 2: Add Translation Entry | Complete | "Files" already exists in translation.json line 771 |
-| Phase 3: Rebuild Docker Image | Blocked | Pre-existing npm package lock sync issue |
+| Phase 3: Verify & Deploy | Ready | Use native dev mode to verify, Docker fixes applied |
 
 **Commit created** on branch `feat/files-menu-item` in the OpenWebUI nested repo (22c9c3b32), but PR creation blocked by hook requiring Docker to work locally first.
 
@@ -41,17 +41,21 @@ type: implementation_strategy
 
 1. **OpenWebUI is a nested git repo** - Located at `OpenWebUI/open-webui/`, it's a separate git repository (origin: upstream open-webui/open-webui), not a submodule of YouLab.
 
-2. **Pre-existing npm lock sync issue** - The OpenWebUI repo has a package.json/package-lock.json sync issue causing Docker builds to fail with:
-   ```
-   Missing: picomatch@4.0.3 from lock file
-   ```
-   This is unrelated to our changes - running `npm install --force` locally added packages but Docker still fails due to lockfile version incompatibility.
+2. **Use native dev mode, not Docker** - OpenWebUI has instant hot-reloading:
+   - Frontend: `npm run dev` (port 5173)
+   - Backend: `./backend/dev.sh` (port 8080)
+   - See `docs/OpenWebUI-Development.md` for full workflow
 
-3. **Local Svelte build works** - `npm run build` completes successfully (481 modules transformed), confirming our Svelte syntax is valid.
+3. **Docker issues and fixes** (for production builds only):
+   - npm lock sync: `git checkout package.json package-lock.json`
+   - Heap memory: Add `ENV NODE_OPTIONS="--max-old-space-size=4096"` to Dockerfile
+   - Cypress download: Add `ENV CYPRESS_INSTALL_BINARY=0` to Dockerfile
 
-4. **Translation already exists** - "Files" key already present in `OpenWebUI/open-webui/src/lib/i18n/locales/en-US/translation.json:771`
+4. **Local Svelte build works** - `npm run build` completes successfully (481 modules transformed), confirming our Svelte syntax is valid.
 
-5. **Hook blocks PR** - A hook prevents PR creation until Docker works locally (error: "do not make a pr until we can get it working in docker locally")
+5. **Translation already exists** - "Files" key already present in `OpenWebUI/open-webui/src/lib/i18n/locales/en-US/translation.json:771`
+
+6. **Hook blocks PR** - A hook prevents PR creation until Docker works locally (error: "do not make a pr until we can get it working in docker locally")
 
 ## Artifacts
 
@@ -60,26 +64,27 @@ type: implementation_strategy
 
 ## Action Items & Next Steps
 
-1. **Fix npm lock sync issue** - The Docker build fails due to OpenWebUI's package-lock.json being out of sync. Options:
-   - Delete `node_modules` and `package-lock.json`, then run `npm install --force` to regenerate
-   - Or update the Dockerfile to use `npm install --force` instead of `npm ci --force`
-   - May need to match npm version between local (11.x) and Docker (10.9.2)
-
-2. **Test locally via dev server** - Alternative to Docker:
+1. **Verify via native dev mode** (recommended):
    ```bash
    cd OpenWebUI/open-webui
-   npm run dev
+   ./backend/dev.sh  # Terminal 1 - backend on :8080
+   npm run dev       # Terminal 2 - frontend on :5173
    ```
-   Then verify at http://localhost:5173
+   Open http://localhost:5173 and verify Files menu item works.
 
-3. **Manual verification** (once running):
-   - Files menu item appears between Notes and Workspace
-   - Icon displays correctly in collapsed sidebar
-   - Text label shows in expanded sidebar
-   - Clicking navigates to /workspace/knowledge
-   - Styling matches adjacent items
+2. **Manual verification checklist**:
+   - [ ] Files menu item appears between Notes and Workspace
+   - [ ] Icon displays correctly in collapsed sidebar
+   - [ ] Text label shows in expanded sidebar
+   - [ ] Clicking navigates to /workspace/knowledge
+   - [ ] Styling matches adjacent items
 
-4. **Create PR** - Once Docker works, push branch and create PR
+3. **Docker build** (for production, after verification):
+   - Dockerfile already patched with heap/Cypress fixes
+   - Ensure clean git state: `git checkout package.json package-lock.json`
+   - Build: `docker compose build open-webui`
+
+4. **Create PR** - Push `feat/files-menu-item` branch and create PR
 
 ## Other Notes
 

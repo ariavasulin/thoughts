@@ -580,13 +580,13 @@ YOULAB_SERVICE_OPENWEBUI_API_KEY=sk-xxxx  # Required for write operations
 ## Success Criteria
 
 ### Phase 1 (Reverse Sync)
-- [ ] Creating Letta folder creates OpenWebUI Knowledge
-- [ ] Files uploaded to Letta appear in OpenWebUI Knowledge
-- [ ] Folder-to-Knowledge mappings are persisted
-- [ ] All tests pass
+- [x] Creating Letta folder creates OpenWebUI Knowledge
+- [x] Files uploaded to Letta appear in OpenWebUI Knowledge
+- [x] Folder-to-Knowledge mappings are persisted
+- [x] All tests pass
 
 ### Phase 2 (Webhook Sync)
-- [ ] Webhook endpoint receives events
+- [x] Webhook endpoint receives events
 - [ ] Knowledge changes sync to Letta immediately
 - [ ] File uploads sync within 1 second
 
