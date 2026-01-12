@@ -42,9 +42,9 @@ After implementation:
 
 - Backend API changes (Phase A is frontend-only)
 - Memory system integration (Phase B)
-- User-level module progression tracking
-- Module completion logic
-- Background agent integration
+- Module progression logic (already implemented via `advance_lesson` tool in backend)
+- Background agent integration (Phase C)
+- User-specific status tracking (status comes from agent memory, not UI)
 - OpenWebUI upstream sync compatibility (we accept fork divergence)
 
 ## Implementation Approach
@@ -77,7 +77,22 @@ export const APP_NAME = 'YouLab';
 - `OpenWebUI/open-webui/static/favicon.png`
 - `OpenWebUI/open-webui/static/logo.png` (if exists)
 
-**Changes**: Replace with YouLab logo (provide logo file)
+**Changes**: Create a simple 'Y' icon as placeholder logo
+
+Generate a clean favicon.png (32x32 or 64x64) with:
+- A bold, stylized 'Y' letter
+- YouLab accent color (iA Writer cyan `#15BDEC` or similar)
+- Transparent or dark background
+- Simple, recognizable at small sizes
+
+Can be created with ImageMagick or a simple SVG-to-PNG conversion:
+```bash
+# Example using ImageMagick (if available)
+convert -size 64x64 xc:transparent -font Helvetica-Bold -pointsize 48 \
+  -fill '#15BDEC' -gravity center -annotate 0 'Y' static/favicon.png
+```
+
+Or manually create an SVG and convert to PNG.
 
 #### 3. Update HTML Title
 **File**: `OpenWebUI/open-webui/src/app.html`
@@ -570,6 +585,8 @@ export interface ModelMeta {
 - [ ] Module status displays correctly
 
 **Implementation Note**: This phase is documentation and types only. Actual module creation will be manual or via course TOML loader (future work).
+
+**Note on Status**: In Phase A, module status is static metadata on the model. True per-user progression tracking would require reading the user's agent `journey` memory block, which is a Phase B/C integration. For now, modules display with a default "available" status.
 
 ---
 
