@@ -698,9 +698,9 @@ dependencies = [
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `uv sync` installs tomli-w
-- [ ] `make check-agent` passes
-- [ ] Unit tests for conversion pass
+- [x] `uv sync` installs tomli-w
+- [x] `make check-agent` passes
+- [x] Unit tests for conversion pass
 
 #### Manual Verification:
 - [ ] Round-trip: `markdown_to_toml(toml_to_markdown(toml))` produces equivalent TOML
@@ -923,9 +923,9 @@ if not storage_manager.user_exists(user_id):
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `make check-agent` passes
-- [ ] API tests for `/users/init` endpoint pass
-- [ ] Idempotent: calling twice doesn't error
+- [x] `make check-agent` passes
+- [x] API tests for `/users/init` endpoint pass
+- [x] Idempotent: calling twice doesn't error
 
 #### Manual Verification:
 - [ ] `curl -X POST localhost:8000/users/init -H "Content-Type: application/json" -d '{"user_id":"test123","name":"Test"}'` creates storage
@@ -1527,9 +1527,9 @@ def edit_memory_block(
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `make check-agent` passes
-- [ ] Unit tests for UserBlockManager pass
-- [ ] Unit tests for PendingDiffStore pass
+- [x] `make check-agent` passes
+- [x] Unit tests for UserBlockManager pass
+- [x] Unit tests for PendingDiffStore pass
 
 #### Manual Verification:
 - [ ] User edit creates git commit and syncs to Letta
@@ -1829,9 +1829,9 @@ app.include_router(blocks_router)
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `make check-agent` passes
-- [ ] API integration tests pass
-- [ ] OpenAPI docs generate correctly
+- [x] `make check-agent` passes
+- [x] API integration tests pass
+- [x] OpenAPI docs generate correctly
 
 #### Manual Verification:
 - [ ] `GET /users/{id}/blocks` returns block list
