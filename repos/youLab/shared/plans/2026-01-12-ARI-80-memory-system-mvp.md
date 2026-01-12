@@ -96,7 +96,6 @@ cd .data/users/test && git log --oneline
 
 - **Diff approval UI** - Pending diffs will be stored but the approval/reject UI is a separate ticket
 - **Real-time notifications** - Socket.IO integration for diff badges is out of scope
-- **Agent thread integration** - Background agent runs won't create OpenWebUI threads yet
 - **SCIM/LDAP user support** - Only standard signup and OAuth trigger initialization
 - **Multi-course blocks** - Blocks are per-user, not per-user-per-course (simplified model)
 - **Letta archival migration** - Existing archival memory stays in Letta, not migrated to git
@@ -2286,12 +2285,519 @@ export async function rejectDiff(userId: string, diffId: string, token: string) 
 
 #### Manual Verification:
 - [ ] "You" menu item appears in sidebar
-- [ ] Clicking "You" shows block cards
+- [ ] Clicking "You" shows block cards (Profile tab)
 - [ ] Clicking a card opens detail modal with markdown content
 - [ ] Editing and saving creates new version
 - [ ] Version history shows commits
 - [ ] Restore button replaces content with old version
 - [ ] Badge shows pending diff count when diffs exist
+
+---
+
+## Phase 7: Frontend - "You" Section Agents Tab
+
+### Overview
+Add the Agents tab to the "You" section, showing background agents with their thread history. This completes the two-tab structure specified in the product spec (Profile + Agents).
+
+Per spec section 2.3-2.4:
+- **Tab 2: Agents** shows background agents grouped by agent name
+- Each agent row shows a list of thread runs with dates
+- Thread naming: `{Agent Name} - {Date}` (e.g., "Insight Synthesizer - Jan 12, 2025")
+- Clicking a thread navigates to that OpenWebUI chat
+- Badge on agent row shows pending diff count
+
+### Changes Required
+
+#### 1. Add Tab Switching to You Page
+**File**: `OpenWebUI/open-webui/src/routes/(app)/you/+page.svelte`
+
+Update to support Profile/Agents tabs using state-driven tab pattern (like SettingsModal.svelte):
+
+```svelte
+<script lang="ts">
+    import { onMount } from 'svelte';
+    import { user } from '$lib/stores';
+    import { getBlocks } from '$lib/apis/memory';
+    import { getBackgroundAgentThreads } from '$lib/apis/memory';
+    import { memoryBlocks } from '$lib/stores/memory';
+    import BlockCard from '$lib/components/you/BlockCard.svelte';
+    import BlockDetailModal from '$lib/components/you/BlockDetailModal.svelte';
+    import AgentsTab from '$lib/components/you/AgentsTab.svelte';
+    import User from '$lib/components/icons/User.svelte';
+    import Bot from '$lib/components/icons/Bot.svelte';
+
+    let loading = true;
+    let selectedLabel: string | null = null;
+    let selectedTab: 'profile' | 'agents' = 'profile';
+
+    onMount(async () => {
+        if ($user) {
+            try {
+                const blocks = await getBlocks($user.id, localStorage.token);
+                memoryBlocks.set(blocks);
+            } catch (e) {
+                console.error('Failed to load blocks:', e);
+            }
+        }
+        loading = false;
+    });
+
+    function openBlock(label: string) {
+        selectedLabel = label;
+    }
+
+    function closeModal() {
+        selectedLabel = null;
+    }
+</script>
+
+<div class="min-h-screen max-h-screen w-full flex flex-col">
+    <!-- Header with tabs -->
+    <div class="px-4 pt-3 pb-2.5 flex items-center justify-between">
+        <h1 class="text-xl font-semibold">You</h1>
+    </div>
+
+    <!-- Tab bar -->
+    <div class="px-4 pb-2">
+        <div role="tablist" class="flex gap-2">
+            <button
+                role="tab"
+                aria-selected={selectedTab === 'profile'}
+                class="px-3 py-1.5 rounded-lg flex items-center gap-2 transition
+                    {selectedTab === 'profile'
+                        ? 'bg-gray-100 dark:bg-gray-800'
+                        : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}"
+                on:click={() => selectedTab = 'profile'}
+            >
+                <User class="size-4" />
+                <span>Profile</span>
+            </button>
+            <button
+                role="tab"
+                aria-selected={selectedTab === 'agents'}
+                class="px-3 py-1.5 rounded-lg flex items-center gap-2 transition
+                    {selectedTab === 'agents'
+                        ? 'bg-gray-100 dark:bg-gray-800'
+                        : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}"
+                on:click={() => selectedTab = 'agents'}
+            >
+                <Bot class="size-4" />
+                <span>Agents</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Tab content -->
+    <div class="flex-1 overflow-y-auto px-4 pb-4">
+        {#if selectedTab === 'profile'}
+            {#if loading}
+                <div class="flex justify-center py-8">
+                    <div class="animate-spin size-6 border-2 border-gray-300 border-t-primary rounded-full" />
+                </div>
+            {:else if $memoryBlocks.length === 0}
+                <div class="text-center text-gray-500 py-8">
+                    No memory blocks found. Start a conversation to begin building your profile.
+                </div>
+            {:else}
+                <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    {#each $memoryBlocks as block}
+                        <BlockCard
+                            label={block.label}
+                            pendingDiffs={block.pendingDiffs}
+                            on:click={() => openBlock(block.label)}
+                        />
+                    {/each}
+                </div>
+            {/if}
+        {:else if selectedTab === 'agents'}
+            <AgentsTab />
+        {/if}
+    </div>
+</div>
+
+{#if selectedLabel}
+    <BlockDetailModal
+        label={selectedLabel}
+        on:close={closeModal}
+    />
+{/if}
+```
+
+#### 2. Create AgentsTab Component
+**File**: `OpenWebUI/open-webui/src/lib/components/you/AgentsTab.svelte` (new file)
+
+```svelte
+<script lang="ts">
+    import { onMount } from 'svelte';
+    import { user } from '$lib/stores';
+    import { getBackgroundAgents } from '$lib/apis/memory';
+    import Collapsible from '$lib/components/common/Collapsible.svelte';
+    import Badge from '$lib/components/common/Badge.svelte';
+    import Bot from '$lib/components/icons/Bot.svelte';
+    import ChevronRight from '$lib/components/icons/ChevronRight.svelte';
+    import ChevronDown from '$lib/components/icons/ChevronDown.svelte';
+
+    interface ThreadRun {
+        id: string;
+        chatId: string;
+        date: string;
+        displayDate: string;
+    }
+
+    interface BackgroundAgent {
+        name: string;
+        pendingDiffs: number;
+        threads: ThreadRun[];
+    }
+
+    let agents: BackgroundAgent[] = [];
+    let loading = true;
+    let error = '';
+    let expandedAgents: Set<string> = new Set();
+
+    onMount(async () => {
+        await loadAgents();
+    });
+
+    async function loadAgents() {
+        loading = true;
+        error = '';
+        try {
+            agents = await getBackgroundAgents($user.id, localStorage.token);
+        } catch (e) {
+            error = 'Failed to load agents';
+            console.error(e);
+        }
+        loading = false;
+    }
+
+    function toggleAgent(name: string) {
+        if (expandedAgents.has(name)) {
+            expandedAgents.delete(name);
+        } else {
+            expandedAgents.add(name);
+        }
+        expandedAgents = expandedAgents; // trigger reactivity
+    }
+
+    function navigateToThread(chatId: string) {
+        window.location.href = `/c/${chatId}`;
+    }
+</script>
+
+<div class="space-y-2">
+    <h2 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-3">
+        Background Agents
+    </h2>
+
+    {#if loading}
+        <div class="flex justify-center py-8">
+            <div class="animate-spin size-6 border-2 border-gray-300 border-t-primary rounded-full" />
+        </div>
+    {:else if error}
+        <div class="text-red-500 text-center py-4">{error}</div>
+    {:else if agents.length === 0}
+        <div class="text-center text-gray-500 py-8">
+            No background agents have run yet.
+        </div>
+    {:else}
+        {#each agents as agent}
+            <div class="border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden">
+                <!-- Agent header (collapsible trigger) -->
+                <button
+                    class="w-full px-4 py-3 flex items-center justify-between
+                           hover:bg-gray-50 dark:hover:bg-gray-850 transition"
+                    on:click={() => toggleAgent(agent.name)}
+                >
+                    <div class="flex items-center gap-3">
+                        <div class="p-1.5 rounded-lg bg-gray-100 dark:bg-gray-800">
+                            <Bot class="size-4 text-gray-600 dark:text-gray-400" />
+                        </div>
+                        <span class="font-medium">{agent.name}</span>
+                        {#if agent.pendingDiffs > 0}
+                            <Badge type="warning" size="sm">{agent.pendingDiffs}</Badge>
+                        {/if}
+                    </div>
+                    <div class="text-gray-400">
+                        {#if expandedAgents.has(agent.name)}
+                            <ChevronDown class="size-4" />
+                        {:else}
+                            <ChevronRight class="size-4" />
+                        {/if}
+                    </div>
+                </button>
+
+                <!-- Thread list (expanded content) -->
+                {#if expandedAgents.has(agent.name)}
+                    <div class="border-t border-gray-200 dark:border-gray-800">
+                        {#if agent.threads.length === 0}
+                            <div class="px-4 py-3 text-gray-500 text-sm">
+                                No thread runs yet
+                            </div>
+                        {:else}
+                            {#each agent.threads as thread, idx}
+                                <a
+                                    href="/c/{thread.chatId}"
+                                    class="block px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-850
+                                           {idx > 0 ? 'border-t border-gray-100 dark:border-gray-850' : ''}"
+                                >
+                                    <div class="flex items-center justify-between">
+                                        <span class="text-sm">
+                                            {agent.name} - {thread.displayDate}
+                                        </span>
+                                        {#if idx === 0}
+                                            <span class="text-xs text-gray-400">(latest)</span>
+                                        {/if}
+                                    </div>
+                                </a>
+                            {/each}
+                        {/if}
+                    </div>
+                {/if}
+            </div>
+        {/each}
+    {/if}
+</div>
+```
+
+#### 3. Add Backend API for Background Agent Threads
+**File**: `src/youlab_server/server/agents_threads.py` (new file)
+
+```python
+"""Background agent thread management endpoints."""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any
+
+import structlog
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+
+from youlab_server.server.users import get_storage_manager
+from youlab_server.storage.git import GitUserStorageManager
+
+log = structlog.get_logger()
+router = APIRouter(prefix="/users/{user_id}/agents", tags=["agents"])
+
+
+class ThreadRun(BaseModel):
+    """A single background agent thread run."""
+
+    id: str
+    chat_id: str
+    date: str
+    display_date: str
+
+
+class BackgroundAgent(BaseModel):
+    """Background agent with thread history."""
+
+    name: str
+    pending_diffs: int
+    threads: list[ThreadRun]
+
+
+@router.get("", response_model=list[BackgroundAgent])
+async def list_background_agents(
+    user_id: str,
+    storage: GitUserStorageManager = Depends(get_storage_manager),
+) -> list[BackgroundAgent]:
+    """
+    List background agents with their thread history.
+
+    Returns agents grouped by name, each with:
+    - List of thread runs (OpenWebUI chat IDs)
+    - Pending diff count for this agent
+    - Threads sorted by date (newest first)
+    """
+    user_storage = storage.get(user_id)
+    if not user_storage.exists:
+        raise HTTPException(status_code=404, detail=f"User {user_id} not found")
+
+    # Get pending diffs to count per agent
+    from youlab_server.storage.blocks import UserBlockManager
+
+    manager = UserBlockManager(user_id, user_storage)
+    pending_diffs = manager.list_pending_diffs()
+
+    # Group diffs by agent
+    agent_diffs: dict[str, int] = {}
+    for diff in pending_diffs:
+        agent_id = diff.get("agent_id", "unknown")
+        agent_diffs[agent_id] = agent_diffs.get(agent_id, 0) + 1
+
+    # Get background agent threads from storage
+    # Thread metadata stored in user's git storage: threads/{agent_name}/{chat_id}.json
+    agents_dir = user_storage.user_dir / "agent_threads"
+    agents: list[BackgroundAgent] = []
+
+    if agents_dir.exists():
+        import json
+
+        for agent_dir in agents_dir.iterdir():
+            if not agent_dir.is_dir():
+                continue
+
+            agent_name = agent_dir.name.replace("_", " ").title()
+            threads: list[ThreadRun] = []
+
+            for thread_file in sorted(
+                agent_dir.glob("*.json"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            ):
+                try:
+                    data = json.loads(thread_file.read_text())
+                    run_date = datetime.fromisoformat(data.get("created_at", ""))
+                    threads.append(
+                        ThreadRun(
+                            id=thread_file.stem,
+                            chat_id=data.get("chat_id", thread_file.stem),
+                            date=data.get("created_at", ""),
+                            display_date=run_date.strftime("%b %d, %Y"),
+                        )
+                    )
+                except Exception as e:
+                    log.warning(
+                        "thread_parse_failed",
+                        agent=agent_name,
+                        file=thread_file.name,
+                        error=str(e),
+                    )
+
+            agents.append(
+                BackgroundAgent(
+                    name=agent_name,
+                    pending_diffs=agent_diffs.get(agent_dir.name, 0),
+                    threads=threads,
+                )
+            )
+
+    # Sort agents by name
+    agents.sort(key=lambda a: a.name)
+
+    return agents
+
+
+@router.post("/{agent_name}/threads")
+async def register_agent_thread(
+    user_id: str,
+    agent_name: str,
+    chat_id: str,
+    storage: GitUserStorageManager = Depends(get_storage_manager),
+) -> dict[str, str]:
+    """
+    Register a new background agent thread run.
+
+    Called when a background agent job starts to create the thread mapping.
+    """
+    import json
+
+    user_storage = storage.get(user_id)
+    if not user_storage.exists:
+        raise HTTPException(status_code=404, detail=f"User {user_id} not found")
+
+    # Create agent threads directory
+    agent_dir = user_storage.user_dir / "agent_threads" / agent_name.lower().replace(" ", "_")
+    agent_dir.mkdir(parents=True, exist_ok=True)
+
+    # Save thread metadata
+    thread_file = agent_dir / f"{chat_id}.json"
+    thread_file.write_text(
+        json.dumps(
+            {
+                "chat_id": chat_id,
+                "created_at": datetime.now().isoformat(),
+                "agent_name": agent_name,
+            },
+            indent=2,
+        )
+    )
+
+    log.info(
+        "agent_thread_registered",
+        user_id=user_id,
+        agent=agent_name,
+        chat_id=chat_id,
+    )
+
+    return {"status": "registered", "chat_id": chat_id}
+```
+
+#### 4. Register Router in Main
+**File**: `src/youlab_server/server/main.py`
+
+Add import and router registration:
+
+```python
+from youlab_server.server.agents_threads import router as agents_router
+
+# In router registration section:
+app.include_router(agents_router)
+```
+
+#### 5. Add Frontend API Function
+**File**: `OpenWebUI/open-webui/src/lib/apis/memory/index.ts`
+
+Add to existing memory API:
+
+```typescript
+export interface ThreadRun {
+    id: string;
+    chatId: string;
+    date: string;
+    displayDate: string;
+}
+
+export interface BackgroundAgent {
+    name: string;
+    pendingDiffs: number;
+    threads: ThreadRun[];
+}
+
+export async function getBackgroundAgents(
+    userId: string,
+    token: string
+): Promise<BackgroundAgent[]> {
+    const res = await fetch(`${YOULAB_API_BASE_URL}/users/${userId}/agents`, {
+        headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) throw new Error('Failed to fetch background agents');
+
+    const data = await res.json();
+
+    // Transform snake_case to camelCase
+    return data.map((agent: any) => ({
+        name: agent.name,
+        pendingDiffs: agent.pending_diffs,
+        threads: agent.threads.map((t: any) => ({
+            id: t.id,
+            chatId: t.chat_id,
+            date: t.date,
+            displayDate: t.display_date,
+        })),
+    }));
+}
+```
+
+### Success Criteria
+
+#### Automated Verification:
+- [ ] `make check-agent` passes (Python lint + typecheck)
+- [ ] TypeScript compiles without errors in OpenWebUI
+- [ ] `npm run build` succeeds in OpenWebUI directory
+
+#### Manual Verification:
+- [ ] "You" section shows two tabs: Profile and Agents
+- [ ] Clicking "Profile" tab shows memory block cards
+- [ ] Clicking "Agents" tab shows background agents list
+- [ ] Each agent row is collapsible (click to expand/collapse)
+- [ ] Expanded agent shows thread runs with dates (e.g., "Insight Synthesizer - Jan 12, 2025")
+- [ ] Clicking a thread navigates to `/c/{chatId}` (OpenWebUI chat)
+- [ ] Badge on agent row shows pending diff count when diffs exist
+- [ ] Empty state shown when no agents have run
 
 ---
 
