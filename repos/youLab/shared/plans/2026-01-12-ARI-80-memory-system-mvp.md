@@ -9,7 +9,8 @@ Implement the core infrastructure for user-scoped memory blocks with git-backed 
 - User initialization endpoint (`/users/init` webhook)
 - UserBlockManager for user-scoped memory blocks
 - Memory block CRUD API with version history
-- "You" section in OpenWebUI sidebar with profile tab
+- "You" section in OpenWebUI sidebar with Profile + Agents tabs
+- Agents tab showing background agent thread history
 
 ## Current State Analysis
 
@@ -70,9 +71,12 @@ After this plan is complete:
 
 5. **"You" section in UI**
    - Sidebar menu item navigates to profile
+   - Two tabs: Profile (memory blocks) and Agents (background agent threads)
    - Profile tab shows memory block cards
    - Click card → detail view with markdown editor
    - Version history with restore buttons
+   - Agents tab shows background agents with thread history
+   - Click thread → navigates to OpenWebUI chat
 
 ### Verification
 
