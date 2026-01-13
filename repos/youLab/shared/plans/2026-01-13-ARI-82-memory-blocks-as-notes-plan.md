@@ -2,996 +2,352 @@
 
 ## Overview
 
-This plan implements a unified architecture where memory blocks are treated as a special type of note in OpenWebUI. Based on comprehensive research (8 documents in `thoughts/shared/research/2026-01-13-ARI-82-*.md`), this plan prioritizes enhancing the existing BlockDetailModal over adapting Notes components, leveraging git-backed versioning as the more robust solution.
+This plan implements a unified architecture where memory blocks are edited using OpenWebUI's NoteEditor component with Markdown + YAML frontmatter storage. The key insight is that NoteEditor already provides everything we need: TipTap rich text editing, autosave, undo/redo, and version history.
+
+**Key Architecture Decision**: Rather than enhance BlockDetailModal with complex editing features, we adapt the existing NoteEditor infrastructure to work with our git-backed storage. This gives us:
+- Rich text editing with TipTap (vs Textarea)
+- Built-in undo/redo via editor history
+- 200ms debounced autosave (already implemented)
+- Version snapshots for navigation
+- WebSocket collaboration (optional future use)
 
 ## Current State Analysis
 
 ### What Exists (ARI-80)
 
-| Component | Implementation | Location |
-|-----------|----------------|----------|
-| Git Storage | Per-user repos with full version history | `src/youlab_server/storage/git.py:41-360` |
-| Block Manager | TOML↔MD conversion, Letta sync, pending diffs | `src/youlab_server/storage/blocks.py:21-395` |
-| Diff Approval | PendingDiffStore with approve/reject workflow | `src/youlab_server/storage/diffs.py:19-144` |
-| Server API | Full CRUD + history + diff endpoints | `src/youlab_server/server/blocks.py:109-274` |
-| Frontend | BlockCard + BlockDetailModal with diff view | `OpenWebUI/open-webui/src/lib/components/you/` |
-| Background Agents | Runner + TOML config, manual triggers only | `src/youlab_server/background/runner.py` |
+| Component | Implementation | Status |
+|-----------|----------------|--------|
+| Git Storage | Per-user repos with MD + frontmatter | ✅ Updated |
+| Block Manager | Direct MD read/write, no TOML conversion | ✅ Updated |
+| Diff Approval | PendingDiffStore with approve/reject workflow | ✅ Exists |
+| Server API | Full CRUD + history + diff endpoints | ✅ Exists |
+| Frontend | BlockCard + BlockDetailModal (simple view) | Needs enhancement |
+| NoteEditor | TipTap rich text + autosave + versions | Ready to adapt |
 
-### Key Research Findings
+### Storage Format (Implemented)
 
-1. **Notes Components Not Suitable** (research: `openwebui-notes-architecture.md`)
-   - Notes uses TipTap rich editor + WebSocket collaboration
-   - BlockDetailModal already has better architecture for structured data
-   - Recommendation: Enhance existing components, adopt only autosave pattern
+Memory blocks are stored as Markdown with YAML frontmatter:
 
-2. **Hidden Models Work** (research: `openwebui-models-chat-folders.md`)
-   - `meta.hidden=true` filtering exists and works
-   - `meta.type="background_agent"` already filtered from tag groups
-   - Gap: No auto-folder creation or auto-chat assignment
+```markdown
+---
+block: student
+schema: college-essay/student
+updated_at: 2026-01-13T10:00:00Z
+---
 
-3. **Freeform Mode Missing** (research: `toml-md-conversion.md`)
-   - Current converter assumes multi-field structure
-   - Single `body` field produces awkward `## Body` section
-   - Need passthrough mode for freeform content
+Freeform markdown content...
 
-4. **Letta Sync Unidirectional** (research: `letta-memory-integration.md`)
-   - Git → Letta only via `_sync_block_to_letta()`
-   - No Letta → Git sync (not needed for this spec)
-   - Block naming: `youlab_user_{user_id}_{label}`
+## Profile
+Background, aspirations, CliftonStrengths...
+
+## Insights
+Key observations from conversation...
+```
+
+Key files already updated:
+- `src/youlab_server/storage/git.py` - `parse_frontmatter()`, `format_frontmatter()`, direct MD storage
+- `src/youlab_server/storage/blocks.py` - Removed TOML conversion imports, works with MD directly
+- `src/youlab_server/storage/convert.py` - **Deleted** (no longer needed)
+
+### NoteEditor Capabilities (from research)
+
+The NoteEditor at `OpenWebUI/open-webui/src/lib/components/notes/NoteEditor.svelte` provides:
+
+1. **TipTap Rich Text**: Full markdown editing with RichTextInput
+2. **Autosave**: 200ms debounce via `changeDebounceHandler()`
+3. **Undo/Redo**: TipTap's built-in `editor.can().undo()` / `editor.can().redo()`
+4. **Versions**: `note.data.versions[]` with version navigation
+5. **File Handling**: Image paste, file uploads, drag-and-drop
+6. **AI Features**: Title generation, content enhancement
 
 ## Desired End State
 
 After implementation:
 
-1. **Memory Blocks** default to freeform (single body field) unless schema specified in course config
-2. **User Storage** follows new schema: `.data/{user-id}/memory-blocks/`, `notes/`, `files/`, `courses/`
-3. **Modules** persist as visible models with `base_model_id = youlab-pipe`
-4. **Background Agents** persist as hidden models (`meta.hidden=true`)
-5. **Chat Folders** auto-created and auto-assigned per model
-6. **Autosave** enabled with 200ms debounce like Notes
-7. **Undo/Redo** buttons in BlockDetailModal navigating git history
+1. **Memory Block Route**: `/memory/{block_label}` route using adapted NoteEditor
+2. **Git-Backed Storage**: All edits go through YouLab API → git commits
+3. **Diff Overlays**: Agent-proposed changes shown as inline suggestions
+4. **Undo/Redo**: Navigate git history via UI buttons
+5. **Autosave**: 200ms debounce with commit on each save
+6. **Models & Folders**: Modules as models, auto-created chat folders
 
-### Verification
+### Architecture Diagram
 
-```bash
-# User storage structure
-ls .data/test-user-id/
-# Expected: config.toml, memory-blocks/, notes/, files/, courses/
-
-# Module appears as model
-curl -s $OPENWEBUI_URL/api/models | jq '.[] | select(.base_model_id == "youlab")'
-# Expected: visible modules with YouLab as base
-
-# Background agent hidden
-curl -s $OPENWEBUI_URL/api/models | jq '.[] | select(.meta.hidden == true)'
-# Expected: background agent models with hidden=true
-
-# Autosave working
-# Edit block in UI, wait 200ms, check git log
-git -C .data/test-user-id log --oneline -1
-# Expected: "Autosave {block_label}"
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        Frontend (Svelte)                         │
+├─────────────────────────────────────────────────────────────────┤
+│  MemoryBlockEditor.svelte (adapted from NoteEditor)             │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │  TipTap Editor (RichTextInput)                          │   │
+│  │  - Markdown editing                                     │   │
+│  │  - Undo/Redo (editor history)                          │   │
+│  │  - Autosave (200ms debounce)                           │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │  DiffOverlay (new)                                      │   │
+│  │  - Show pending agent diffs inline                      │   │
+│  │  - Approve/Reject buttons                               │   │
+│  └─────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    YouLab Server (FastAPI)                       │
+├─────────────────────────────────────────────────────────────────┤
+│  Memory Blocks API                                               │
+│  ┌───────────────────────────────────────────────────────────┐ │
+│  │  GitNotesAdapter (new)                                    │ │
+│  │  - Implements Notes-like API shape                        │ │
+│  │  - Maps to UserBlockManager                               │ │
+│  │  - Returns { content: { md, html, json }, versions }      │ │
+│  └───────────────────────────────────────────────────────────┘ │
+│                              │                                   │
+│                              ▼                                   │
+│  ┌───────────────────────────────────────────────────────────┐ │
+│  │  UserBlockManager                                         │ │
+│  │  - Git storage (MD + frontmatter)                         │ │
+│  │  - Version history                                        │ │
+│  │  - Pending diffs                                          │ │
+│  │  - Letta sync                                             │ │
+│  └───────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ## What We're NOT Doing
 
-1. **Not replacing BlockDetailModal with NoteEditor** - BlockDetailModal is better suited
-2. **Not implementing real-time collaboration** - Not needed for memory blocks
-3. **Not implementing bidirectional Letta sync** - Git remains source of truth
-4. **Not implementing rich text editing** - Keep simple Textarea for now
-5. **Not implementing background agent triggers** - Deferred to future ticket
-6. **Not migrating to Markdown-first storage** - Keep TOML source with freeform mode
-
-## Implementation Approach
-
-The implementation follows a bottom-up approach:
-1. Backend storage changes first (directory structure, freeform conversion)
-2. API updates to support new patterns
-3. Frontend enhancements (autosave, undo/redo)
-4. OpenWebUI integrations (models, folders)
+1. **Not using TOML storage** - Migrated to MD + frontmatter
+2. **Not enhancing BlockDetailModal** - Adapting NoteEditor instead
+3. **Not implementing WebSocket collab** - Single-user editing for now
+4. **Not implementing bidirectional Letta sync** - Git remains source of truth
+5. **Not migrating existing Notes** - Memory blocks are a separate system
 
 ---
 
-## Phase 1: User Storage Schema Migration
+## Phase 1: Storage Format Migration
 
-### Overview
+**Status**: ✅ Completed
 
-Migrate user storage from `blocks/` to new schema with `memory-blocks/`, `notes/`, `files/`, and `courses/` directories. Maintain backward compatibility during transition.
+Storage has been migrated from TOML to Markdown with YAML frontmatter.
 
-### Changes Required:
+### What Was Done
 
-#### 1. Update GitUserStorage
+1. **GitUserStorage** (`src/youlab_server/storage/git.py`)
+   - Added `parse_frontmatter()` and `format_frontmatter()` helpers
+   - `write_block()` now creates frontmatter automatically
+   - `read_block_body()` strips frontmatter for Letta sync
 
-**File**: `src/youlab_server/storage/git.py`
+2. **UserBlockManager** (`src/youlab_server/storage/blocks.py`)
+   - Removed TOML conversion imports
+   - `update_block()` accepts raw markdown
+   - `get_block_markdown()` returns full content with frontmatter
+   - `get_block_body()` returns body only
 
-Add new directory properties and migration logic:
+3. **Deleted Files**
+   - `src/youlab_server/storage/convert.py` - No longer needed
+   - `tests/test_storage/test_convert.py` - Test file removed
 
-```python
-# After line 57, add new properties:
-@property
-def memory_blocks_dir(self) -> Path:
-    """Memory blocks directory (new schema)."""
-    return self.user_dir / "memory-blocks"
+### Verification
 
-@property
-def notes_dir(self) -> Path:
-    """User notes directory."""
-    return self.user_dir / "notes"
+```bash
+# Tests pass
+make test-agent
 
-@property
-def files_dir(self) -> Path:
-    """User files directory."""
-    return self.user_dir / "files"
-
-@property
-def courses_dir(self) -> Path:
-    """Course symlinks directory."""
-    return self.user_dir / "courses"
-
-# Update init() around line 93-105:
-def init(self, migrate_blocks: bool = True) -> None:
-    """Initialize user storage directories and git repo."""
-    # Create new directory structure
-    self.memory_blocks_dir.mkdir(parents=True, exist_ok=True)
-    self.notes_dir.mkdir(exist_ok=True)
-    self.files_dir.mkdir(exist_ok=True)
-    (self.files_dir / "private").mkdir(exist_ok=True)
-    (self.files_dir / "shared").mkdir(exist_ok=True)
-    (self.files_dir / "archive").mkdir(exist_ok=True)
-    self.courses_dir.mkdir(exist_ok=True)
-
-    # Migrate from blocks/ to memory-blocks/ if needed
-    if migrate_blocks and self.blocks_dir.exists():
-        self._migrate_blocks()
-
-    # ... rest of init
-
-def _migrate_blocks(self) -> None:
-    """Migrate blocks/ to memory-blocks/ for existing users."""
-    old_dir = self.user_dir / "blocks"
-    if not old_dir.exists():
-        return
-
-    for toml_file in old_dir.glob("*.toml"):
-        dest = self.memory_blocks_dir / toml_file.name
-        if not dest.exists():
-            toml_file.rename(dest)
-
-    # Keep empty blocks/ for backward compat, or remove if empty
-    if not any(old_dir.iterdir()):
-        old_dir.rmdir()
+# Storage format
+cat .data/users/test-user/memory-blocks/student.md
+# Expected:
+# ---
+# block: student
+# schema: college-essay/student
+# updated_at: 2026-01-14T...
+# ---
+#
+# Content here...
 ```
-
-#### 2. Update blocks_dir property
-
-**File**: `src/youlab_server/storage/git.py`
-
-Update the `blocks_dir` property to prefer new location:
-
-```python
-@property
-def blocks_dir(self) -> Path:
-    """Memory blocks directory (prefers new schema)."""
-    new_dir = self.user_dir / "memory-blocks"
-    if new_dir.exists():
-        return new_dir
-    # Fall back to legacy location
-    return self.user_dir / "blocks"
-```
-
-#### 3. Add config.toml support
-
-**File**: `src/youlab_server/storage/git.py`
-
-Add user config file handling:
-
-```python
-@property
-def config_file(self) -> Path:
-    """User configuration file."""
-    return self.user_dir / "config.toml"
-
-def get_user_config(self) -> dict[str, Any]:
-    """Read user configuration."""
-    if not self.config_file.exists():
-        return {}
-    return tomllib.loads(self.config_file.read_text())
-
-def update_user_config(self, config: dict[str, Any]) -> None:
-    """Update user configuration."""
-    import tomli_w
-    self.config_file.write_text(tomli_w.dumps(config))
-```
-
-### Success Criteria:
-
-#### Automated Verification:
-- [ ] Tests pass: `make test-agent`
-- [ ] Type checking passes: `make check-agent`
-- [ ] New user init creates correct structure:
-  ```python
-  # In test
-  storage = GitUserStorage(Path(".data/test-user"))
-  storage.init()
-  assert (storage.user_dir / "memory-blocks").exists()
-  assert (storage.user_dir / "notes").exists()
-  assert (storage.user_dir / "files" / "private").exists()
-  ```
-- [ ] Existing user migration works: blocks/ → memory-blocks/
-
-#### Manual Verification:
-- [ ] Create new user via API, verify directory structure
-- [ ] Migrate existing test user, verify blocks accessible
 
 ---
 
-## Phase 2: Freeform Block Support
+## Phase 2: Memory Block Editor Route
+
+**Status**: 🔲 Not Started
+
+Create a dedicated route `/memory/{label}` that uses an adapted NoteEditor for memory block editing.
+
+### Sub-Plan
+
+See: `thoughts/shared/plans/2026-01-14-ARI-82-phase2-memory-editor-route.md`
 
 ### Overview
 
-Add freeform mode to TOML↔MD conversion. Freeform blocks have a single `body` field that passes through without section wrapping.
+1. **Create MemoryBlockEditor.svelte** - Adapted from NoteEditor
+   - Remove WebSocket collaboration (not needed)
+   - Remove Notes-specific features (folders, sharing)
+   - Add block label display and schema info
+   - Wire to YouLab API instead of Notes API
 
-### Changes Required:
+2. **Create Memory API Functions** - Client-side API
+   - `getMemoryBlock(userId, label)` → GET /users/{user_id}/blocks/{label}
+   - `updateMemoryBlock(userId, label, content)` → PUT /users/{user_id}/blocks/{label}
+   - `getMemoryBlockHistory(userId, label)` → GET /users/{user_id}/blocks/{label}/history
 
-#### 1. Update TOML→Markdown conversion
+3. **Create Route** - `/memory/[label]/+page.svelte`
+   - Load block data on mount
+   - Initialize TipTap with markdown content
+   - Wire autosave to API
 
-**File**: `src/youlab_server/storage/convert.py`
+### Success Criteria
 
-Replace `toml_to_markdown` function (lines 12-71):
-
-```python
-def toml_to_markdown(toml_content: str, label: str, schema: dict | None = None) -> str:
-    """
-    Convert TOML content to Markdown for editing.
-
-    If the block has a single 'body' key (or schema specifies freeform),
-    pass through without section wrapping.
-    """
-    # Frontmatter header
-    lines = [
-        "---",
-        f"block: {label}",
-        "---",
-        "",
-    ]
-
-    try:
-        data = tomllib.loads(toml_content)
-    except Exception:
-        # Invalid TOML - show raw with error flag
-        lines.insert(2, "error: invalid_toml")
-        lines.append("```toml")
-        lines.append(toml_content)
-        lines.append("```")
-        return "\n".join(lines)
-
-    # Check if freeform: single 'body' key or schema says freeform
-    is_freeform = (
-        len(data) == 1 and "body" in data
-    ) or (schema and schema.get("freeform", False))
-
-    if is_freeform and "body" in data:
-        # Freeform mode: pass through body directly
-        lines.append(data["body"])
-    else:
-        # Multi-field mode: each key becomes a section
-        for key, value in data.items():
-            title = key.replace("_", " ").title()
-            lines.append(f"## {title}")
-            lines.append("")
-
-            if value is None:
-                lines.append("*(not set)*")
-            elif isinstance(value, bool):
-                lines.append("Yes" if value else "No")
-            elif isinstance(value, list):
-                for item in value:
-                    lines.append(f"- {item}")
-            else:
-                lines.append(str(value))
-
-            lines.append("")
-
-    return "\n".join(lines).rstrip() + "\n"
-```
-
-#### 2. Update Markdown→TOML conversion
-
-**File**: `src/youlab_server/storage/convert.py`
-
-Update `markdown_to_toml` function (lines 74-133):
-
-```python
-def markdown_to_toml(markdown_content: str, schema: dict | None = None) -> tuple[str, dict[str, Any]]:
-    """
-    Convert Markdown back to TOML.
-
-    Returns (toml_string, metadata_dict).
-    """
-    lines = markdown_content.split("\n")
-
-    # Extract frontmatter
-    metadata = {}
-    content_start = 0
-    if lines and lines[0].strip() == "---":
-        for i, line in enumerate(lines[1:], start=1):
-            if line.strip() == "---":
-                content_start = i + 1
-                break
-            if ":" in line:
-                key, _, value = line.partition(":")
-                metadata[key.strip()] = value.strip()
-
-    content_lines = lines[content_start:]
-
-    # Check if schema specifies freeform
-    is_freeform = schema and schema.get("freeform", False)
-
-    # Detect if content has sections (## headings)
-    has_sections = any(line.strip().startswith("## ") for line in content_lines)
-
-    if is_freeform or not has_sections:
-        # Freeform mode: wrap all content in body field
-        body = "\n".join(content_lines).strip()
-        return f'body = """\n{body}\n"""', metadata
-
-    # Multi-field mode: parse sections
-    data = {}
-    current_key = None
-    current_lines = []
-
-    for line in content_lines:
-        if line.startswith("## "):
-            # Save previous section
-            if current_key:
-                data[current_key] = _finalize_section(current_lines)
-
-            # Start new section
-            title = line[3:].strip()
-            current_key = _title_to_key(title)
-            current_lines = []
-        elif current_key is not None:
-            current_lines.append(line)
-
-    # Save last section
-    if current_key:
-        data[current_key] = _finalize_section(current_lines)
-
-    # Convert to TOML
-    toml_lines = []
-    for key, value in data.items():
-        if value is None or value == "":
-            continue
-        elif isinstance(value, list):
-            toml_lines.append(f"{key} = {value!r}")
-        elif "\n" in str(value):
-            toml_lines.append(f'{key} = """\n{value}\n"""')
-        else:
-            toml_lines.append(f'{key} = "{value}"')
-
-    return "\n".join(toml_lines), metadata
-```
-
-#### 3. Update UserBlockManager to pass schema
-
-**File**: `src/youlab_server/storage/blocks.py`
-
-Add schema parameter to conversion methods:
-
-```python
-def get_block_markdown(self, label: str, schema: dict | None = None) -> str | None:
-    """Get block content as Markdown for editing."""
-    toml_content = self.storage.read_block(label)
-    if toml_content is None:
-        return None
-    return toml_to_markdown(toml_content, label, schema)
-
-def update_block_from_markdown(
-    self,
-    label: str,
-    markdown: str,
-    message: str | None = None,
-    sync_to_letta: bool = True,
-    schema: dict | None = None,
-) -> str:
-    """Update block from Markdown content (user edit)."""
-    toml_content, _ = markdown_to_toml(markdown, schema)
-    # ... rest unchanged
-```
-
-### Success Criteria:
-
-#### Automated Verification:
-- [ ] Tests pass: `make test-agent`
-- [ ] Freeform round-trip test:
-  ```python
-  # In test
-  toml_in = 'body = """\nHello world\n"""'
-  md = toml_to_markdown(toml_in, "test")
-  toml_out, _ = markdown_to_toml(md)
-  assert "Hello world" in toml_out
-  assert "## Body" not in md  # No section wrapper
-  ```
-- [ ] Multi-field still works:
-  ```python
-  toml_in = 'name = "Alice"\nrole = "Student"'
-  md = toml_to_markdown(toml_in, "test")
-  assert "## Name" in md
-  assert "## Role" in md
-  ```
-
-#### Manual Verification:
-- [ ] Create freeform block via API, verify MD has no section headers
-- [ ] Edit freeform block in UI, verify body preserved
+- [ ] Route `/memory/student` loads and displays block content
+- [ ] TipTap editor renders markdown correctly
+- [ ] Edits trigger autosave after 200ms
+- [ ] Undo/Redo buttons work
+- [ ] Block label shown in header
 
 ---
 
-## Phase 3: Autosave and Undo/Redo
+## Phase 3: Git Storage Adapter
+
+**Status**: 🔲 Not Started
+
+Create an adapter that makes UserBlockManager compatible with the Notes component's expected data shape.
+
+### Sub-Plan
+
+See: `thoughts/shared/plans/2026-01-14-ARI-82-phase3-git-storage-adapter.md`
 
 ### Overview
 
-Add autosave with 200ms debounce (like Notes) and undo/redo navigation through git history.
-
-### Changes Required:
-
-#### 1. Add autosave endpoint
-
-**File**: `src/youlab_server/server/blocks.py`
-
-Add autosave endpoint after line 177:
-
-```python
-@router.post("/{label}/autosave")
-async def autosave_block(
-    user_id: str,
-    label: str,
-    request: BlockUpdateRequest,
-    storage: Annotated[GitUserStorageManager, Depends(get_storage)],
-    letta: Annotated[Letta | None, Depends(get_letta_client)],
-) -> BlockUpdateResponse:
-    """
-    Autosave block content with minimal commit message.
-
-    Same as update but with "Autosave" prefix for commit message.
-    """
-    user_storage = storage.get(user_id)
-    manager = UserBlockManager(user_id, user_storage, letta)
-
-    try:
-        if request.format == "markdown":
-            commit_sha = manager.update_block_from_markdown(
-                label=label,
-                markdown=request.content,
-                message=f"Autosave {label}",
-                sync_to_letta=True,
-            )
-        else:
-            commit_sha = manager.update_block_from_toml(
-                label=label,
-                toml_content=request.content,
-                message=f"Autosave {label}",
-                author="autosave",
-                sync_to_letta=True,
-            )
-
-        return BlockUpdateResponse(success=True, commit_sha=commit_sha)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-```
-
-#### 2. Add autosave to BlockDetailModal
-
-**File**: `OpenWebUI/open-webui/src/lib/components/you/BlockDetailModal.svelte`
-
-Add autosave logic (after line 34):
-
+The NoteEditor expects data in this shape:
 ```typescript
-let autosaveTimeout: ReturnType<typeof setTimeout> | null = null;
-let lastSavedContent = '';
-let autosaveStatus: 'idle' | 'saving' | 'saved' | 'error' = 'idle';
-
-function scheduleAutosave() {
-    if (autosaveTimeout) {
-        clearTimeout(autosaveTimeout);
-    }
-
-    autosaveTimeout = setTimeout(async () => {
-        if (markdownContent !== lastSavedContent && markdownContent.trim()) {
-            autosaveStatus = 'saving';
-            try {
-                await autosaveBlock($user.id, label, markdownContent, localStorage.token);
-                lastSavedContent = markdownContent;
-                autosaveStatus = 'saved';
-                // Reset to idle after 2 seconds
-                setTimeout(() => { autosaveStatus = 'idle'; }, 2000);
-            } catch (e) {
-                autosaveStatus = 'error';
-                console.error('Autosave failed:', e);
-            }
-        }
-    }, 200);
-}
-
-// Trigger autosave on content change
-$: if (editMode && markdownContent) {
-    scheduleAutosave();
+interface Note {
+  id: string;
+  title: string;
+  data: {
+    content: {
+      json: object | null;  // TipTap JSON
+      html: string;
+      md: string;
+    };
+    versions: ContentVersion[];
+    files: File[] | null;
+  };
+  write_access: boolean;
 }
 ```
 
-Add autosave status indicator in the UI (update line 270 area):
-
-```svelte
-{#if editMode}
-    <div class="flex items-center gap-2 text-xs text-gray-400">
-        {#if autosaveStatus === 'saving'}
-            <span>Saving...</span>
-        {:else if autosaveStatus === 'saved'}
-            <span class="text-green-500">Saved</span>
-        {:else if autosaveStatus === 'error'}
-            <span class="text-red-500">Save failed</span>
-        {/if}
-    </div>
-{/if}
+Our blocks have:
+```python
+# From UserBlockManager
+block_markdown: str  # Full MD with frontmatter
+block_body: str      # Body only
+metadata: dict       # Frontmatter fields
+history: list[VersionInfo]
 ```
 
-#### 3. Add undo/redo navigation
+### Changes Required
 
-**File**: `OpenWebUI/open-webui/src/lib/components/you/BlockDetailModal.svelte`
+1. **GitNotesAdapter** (`src/youlab_server/server/notes_adapter.py`)
+   - `get_block_as_note(user_id, label)` → Note-shaped response
+   - `update_block_from_note(user_id, label, note_data)` → Commit
+   - Maps git history to `versions[]` format
 
-Add navigation state and handlers (after autosave code):
+2. **API Endpoint** (`src/youlab_server/server/blocks.py`)
+   - Add `GET /users/{user_id}/blocks/{label}/note` - Note-shaped response
+   - Add `PUT /users/{user_id}/blocks/{label}/note` - Note-shaped update
 
-```typescript
-let historyIndex = 0;  // 0 = current, 1 = one back, etc.
+### Success Criteria
 
-async function undo() {
-    if (historyIndex < $blockHistory.length - 1) {
-        historyIndex++;
-        const version = $blockHistory[historyIndex];
-        const content = await getBlockVersion($user.id, label, version.sha, localStorage.token);
-        markdownContent = toml_to_markdown(content);  // Need client-side conversion or API change
-    }
-}
-
-async function redo() {
-    if (historyIndex > 0) {
-        historyIndex--;
-        if (historyIndex === 0) {
-            // Back to current
-            await loadBlock();
-        } else {
-            const version = $blockHistory[historyIndex];
-            const content = await getBlockVersion($user.id, label, version.sha, localStorage.token);
-            markdownContent = toml_to_markdown(content);
-        }
-    }
-}
-
-$: canUndo = historyIndex < $blockHistory.length - 1;
-$: canRedo = historyIndex > 0;
-```
-
-Add undo/redo buttons to header (update line 237 area):
-
-```svelte
-<div class="flex gap-2">
-    {#if editMode}
-        <button
-            class="p-1.5 rounded hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-30"
-            disabled={!canUndo}
-            on:click={undo}
-            title={$i18n.t('Undo')}
-        >
-            <ArrowUturnLeft className="size-4" />
-        </button>
-        <button
-            class="p-1.5 rounded hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-30"
-            disabled={!canRedo}
-            on:click={redo}
-            title={$i18n.t('Redo')}
-        >
-            <ArrowUturnRight className="size-4" />
-        </button>
-    {/if}
-    <!-- existing buttons -->
-</div>
-```
-
-#### 4. Add autosave API function
-
-**File**: `OpenWebUI/open-webui/src/lib/apis/memory/index.ts`
-
-Add autosave function:
-
-```typescript
-export async function autosaveBlock(
-    userId: string,
-    label: string,
-    content: string,
-    token: string
-): Promise<{ success: boolean; commit_sha: string }> {
-    const response = await fetch(
-        `${YOULAB_API_BASE_URL}/users/${userId}/blocks/${label}/autosave`,
-        {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({
-                content,
-                format: 'markdown',
-            }),
-        }
-    );
-
-    if (!response.ok) {
-        throw new Error(`Autosave failed: ${response.statusText}`);
-    }
-
-    return response.json();
-}
-```
-
-### Success Criteria:
-
-#### Automated Verification:
-- [ ] Tests pass: `make test-agent`
-- [ ] Autosave endpoint works:
-  ```bash
-  curl -X POST $YOULAB_URL/users/test/blocks/student/autosave \
-    -H "Content-Type: application/json" \
-    -d '{"content": "# Test\n\nContent", "format": "markdown"}'
-  # Expected: {"success": true, "commit_sha": "..."}
-  ```
-
-#### Manual Verification:
-- [ ] Edit block in UI, wait 200ms, verify autosave status shows "Saved"
-- [ ] Check git log shows "Autosave student" commit
-- [ ] Click undo button, verify previous content loads
-- [ ] Click redo button, verify returns to latest content
+- [ ] `/blocks/{label}/note` returns Note-compatible shape
+- [ ] MemoryBlockEditor can consume the response directly
+- [ ] Updates preserve frontmatter metadata
+- [ ] Git commits created on save
 
 ---
 
-## Phase 4: Models and Folders Integration
+## Phase 4: Diff Approval Integration
+
+**Status**: 🔲 Not Started
+
+Add inline diff visualization and approval UI to the memory editor.
+
+### Sub-Plan
+
+See: `thoughts/shared/plans/2026-01-14-ARI-82-phase4-diff-approval.md`
 
 ### Overview
 
-Create modules as visible OpenWebUI models with `base_model_id = youlab`. Create background agents as hidden models. Auto-create folders and auto-assign chats.
+When an agent proposes changes via `edit_memory_block` tool:
+1. Diff is stored in `PendingDiffStore`
+2. Editor shows inline overlay with proposed changes
+3. User can approve (applies change) or reject (dismisses)
 
-### Changes Required:
+### Changes Required
 
-#### 1. Add YouLab base model creation
+1. **DiffOverlay.svelte** (new component)
+   - Render proposed changes as inline additions/deletions
+   - Approve/Reject buttons per diff
+   - Batch approve all button
 
-**File**: `src/youlab_server/server/main.py`
+2. **API Integration**
+   - Poll for pending diffs on editor mount
+   - `POST /blocks/{label}/diffs/{diff_id}/approve`
+   - `POST /blocks/{label}/diffs/{diff_id}/reject`
 
-Add base model creation in lifespan (after curriculum init, around line 99):
+3. **Visual Design**
+   - Green background for additions
+   - Red strikethrough for deletions
+   - Floating action buttons
 
-```python
-async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    # ... existing init
+### Success Criteria
 
-    # Ensure YouLab base model exists in OpenWebUI
-    from youlab_server.server.sync.openwebui_client import OpenWebUIClient
-    openwebui = OpenWebUIClient(settings.openwebui_api_url, settings.openwebui_api_key)
-
-    await openwebui.ensure_base_model(
-        model_id="youlab",
-        name="YouLab",
-        description="YouLab tutoring platform",
-        pipe=True,  # This is a pipe model
-    )
-
-    yield
-    # cleanup...
-```
-
-#### 2. Add model sync to OpenWebUIClient
-
-**File**: `src/youlab_server/server/sync/openwebui_client.py`
-
-Add model management methods:
-
-```python
-async def ensure_base_model(
-    self,
-    model_id: str,
-    name: str,
-    description: str,
-    pipe: bool = False,
-) -> dict:
-    """Ensure base model exists in OpenWebUI."""
-    models = await self._request("GET", "/api/models")
-
-    existing = next((m for m in models if m["id"] == model_id), None)
-    if existing:
-        return existing
-
-    return await self._request(
-        "POST",
-        "/api/models",
-        json={
-            "id": model_id,
-            "name": name,
-            "params": {"system": ""},
-            "meta": {
-                "description": description,
-                "hidden": False,
-            },
-            "is_active": True,
-        }
-    )
-
-async def create_module_model(
-    self,
-    module_id: str,
-    module_name: str,
-    system_prompt: str,
-    base_model_id: str = "youlab",
-) -> dict:
-    """Create a module as a visible model."""
-    return await self._request(
-        "POST",
-        "/api/models",
-        json={
-            "id": f"module-{module_id}",
-            "name": module_name,
-            "base_model_id": base_model_id,
-            "params": {"system": system_prompt},
-            "meta": {
-                "description": f"YouLab module: {module_name}",
-                "hidden": False,
-                "type": "module",
-            },
-            "is_active": True,
-        }
-    )
-
-async def create_background_agent_model(
-    self,
-    agent_id: str,
-    agent_name: str,
-    system_prompt: str,
-    base_model_id: str = "youlab",
-) -> dict:
-    """Create a background agent as a hidden model."""
-    return await self._request(
-        "POST",
-        "/api/models",
-        json={
-            "id": f"agent-{agent_id}",
-            "name": agent_name,
-            "base_model_id": base_model_id,
-            "params": {"system": system_prompt},
-            "meta": {
-                "description": f"Background agent: {agent_name}",
-                "hidden": True,
-                "type": "background_agent",
-            },
-            "is_active": True,
-        }
-    )
-
-async def ensure_model_folder(
-    self,
-    model_id: str,
-    folder_name: str,
-    user_id: str,
-) -> str:
-    """Ensure a folder exists for a model, return folder_id."""
-    # Check existing folders
-    folders = await self._request("GET", f"/api/folders?user_id={user_id}")
-
-    # Look for folder with model_id in meta
-    existing = next(
-        (f for f in folders if f.get("meta", {}).get("model_id") == model_id),
-        None
-    )
-    if existing:
-        return existing["id"]
-
-    # Create new folder
-    result = await self._request(
-        "POST",
-        "/api/folders",
-        json={
-            "name": folder_name,
-            "user_id": user_id,
-            "meta": {"model_id": model_id},
-        }
-    )
-    return result["id"]
-
-async def create_chat_in_folder(
-    self,
-    title: str,
-    model_id: str,
-    folder_id: str,
-    user_id: str,
-) -> dict:
-    """Create a chat in a specific folder."""
-    return await self._request(
-        "POST",
-        "/api/chats/new",
-        json={
-            "title": title,
-            "model": model_id,
-            "folder_id": folder_id,
-            "chat": {"messages": []},
-        }
-    )
-```
-
-#### 3. Create models on course enrollment
-
-**File**: `src/youlab_server/server/agents.py`
-
-Update `create_agent_from_curriculum` to sync models (around line 220):
-
-```python
-async def create_agent_from_curriculum(
-    self,
-    user_id: str,
-    course_id: str,
-    openwebui_client: OpenWebUIClient | None = None,
-) -> str:
-    """Create agent and sync module models to OpenWebUI."""
-    # ... existing agent creation logic
-
-    if openwebui_client:
-        # Create module models
-        for module in course_config.modules:
-            await openwebui_client.create_module_model(
-                module_id=module.id,
-                module_name=module.name,
-                system_prompt=module.agent.system or course_config.agent.system,
-            )
-
-            # Create folder for module
-            await openwebui_client.ensure_model_folder(
-                model_id=f"module-{module.id}",
-                folder_name=module.name,
-                user_id=user_id,
-            )
-
-        # Create background agent models
-        for task in course_config.tasks:
-            await openwebui_client.create_background_agent_model(
-                agent_id=task.name,
-                agent_name=task.name.replace("-", " ").title(),
-                system_prompt=task.system or "",
-            )
-
-    return agent_id
-```
-
-### Success Criteria:
-
-#### Automated Verification:
-- [ ] Tests pass: `make test-agent`
-- [ ] Module model created:
-  ```bash
-  curl -s $OPENWEBUI_URL/api/models | jq '.[] | select(.id | startswith("module-"))'
-  # Expected: visible models with base_model_id = youlab
-  ```
-- [ ] Background agent hidden:
-  ```bash
-  curl -s $OPENWEBUI_URL/api/models | jq '.[] | select(.meta.hidden == true)'
-  # Expected: background agent models
-  ```
-
-#### Manual Verification:
-- [ ] Module appears in model selector dropdown
-- [ ] Background agent does NOT appear in model selector
-- [ ] Folder auto-created for module
-- [ ] New chat with module auto-assigned to folder
+- [ ] Pending diffs shown as inline overlays
+- [ ] Approve applies the change and commits
+- [ ] Reject dismisses the diff
+- [ ] Editor content updates after approval
 
 ---
 
-## Phase 5: Notes Storage (Future)
+## Phase 5: Models and Folders
+
+**Status**: 🔲 Not Started
+
+Create course modules as OpenWebUI models and auto-organize chats into folders.
+
+### Sub-Plan
+
+See: `thoughts/shared/plans/2026-01-14-ARI-82-phase5-models-folders.md`
 
 ### Overview
 
-Add user notes storage alongside memory blocks. Notes are freeform Markdown files stored in git.
+1. **Module → Model**: Each course module becomes a visible model in OpenWebUI
+   - `base_model_id = "youlab-pipe"`
+   - Custom system prompt from module config
+   - `meta.type = "module"`
 
-**Note**: This phase is lower priority and can be deferred. The current focus is on memory blocks.
+2. **Background Agent → Hidden Model**: Hidden from model selector
+   - `meta.hidden = true`
+   - `meta.type = "background_agent"`
 
-### Changes Required:
+3. **Auto-Folders**: Create folder per module, auto-assign new chats
 
-#### 1. Add notes CRUD to GitUserStorage
+### Changes Required
 
-**File**: `src/youlab_server/storage/git.py`
+1. **OpenWebUIClient** (`src/youlab_server/server/sync/openwebui_client.py`)
+   - `create_module_model(module_config)`
+   - `create_background_agent_model(agent_config)`
+   - `ensure_model_folder(model_id, user_id)`
 
-```python
-def list_notes(self) -> list[str]:
-    """List all note IDs."""
-    return [f.stem for f in self.notes_dir.glob("*.md")]
+2. **Course Enrollment Flow**
+   - On enrollment, create models for all modules
+   - Create folders for each module
+   - Background agents created as hidden
 
-def read_note(self, note_id: str) -> str | None:
-    """Read note content."""
-    path = self.notes_dir / f"{note_id}.md"
-    if not path.exists():
-        return None
-    return path.read_text()
+### Success Criteria
 
-def write_note(
-    self,
-    note_id: str,
-    content: str,
-    message: str | None = None,
-) -> str:
-    """Write note and commit."""
-    path = self.notes_dir / f"{note_id}.md"
-    path.write_text(content)
-
-    self.repo.index.add([str(path.relative_to(self.user_dir))])
-    commit = self.repo.index.commit(message or f"Update note {note_id}")
-    return commit.hexsha
-
-def delete_note(self, note_id: str) -> None:
-    """Delete note."""
-    path = self.notes_dir / f"{note_id}.md"
-    if path.exists():
-        path.unlink()
-        self.repo.index.remove([str(path.relative_to(self.user_dir))])
-        self.repo.index.commit(f"Delete note {note_id}")
-```
-
-#### 2. Add notes API endpoints
-
-**File**: `src/youlab_server/server/notes.py` (new file)
-
-```python
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
-
-router = APIRouter(prefix="/users/{user_id}/notes", tags=["notes"])
-
-class NoteCreateRequest(BaseModel):
-    content: str
-    title: str | None = None
-
-class NoteResponse(BaseModel):
-    id: str
-    content: str
-    title: str | None
-    created_at: str
-    updated_at: str
-
-@router.get("/")
-async def list_notes(user_id: str, storage: ...) -> list[NoteResponse]:
-    """List all notes for user."""
-    ...
-
-@router.post("/")
-async def create_note(user_id: str, request: NoteCreateRequest, storage: ...) -> NoteResponse:
-    """Create a new note."""
-    ...
-
-@router.get("/{note_id}")
-async def get_note(user_id: str, note_id: str, storage: ...) -> NoteResponse:
-    """Get note by ID."""
-    ...
-
-@router.put("/{note_id}")
-async def update_note(user_id: str, note_id: str, request: NoteCreateRequest, storage: ...) -> NoteResponse:
-    """Update note content."""
-    ...
-
-@router.delete("/{note_id}")
-async def delete_note(user_id: str, note_id: str, storage: ...) -> dict:
-    """Delete note."""
-    ...
-```
-
-### Success Criteria:
-
-#### Automated Verification:
-- [ ] Notes CRUD operations work
-- [ ] Notes stored in `.data/{user_id}/notes/`
-- [ ] Git versioning for notes
-
-#### Manual Verification:
-- [ ] Create/read/update/delete notes via API
-- [ ] Notes visible in git history
+- [ ] Module models appear in OpenWebUI model selector
+- [ ] Background agents don't appear in selector
+- [ ] Folders auto-created per module
+- [ ] New chats in module auto-assigned to folder
 
 ---
 
@@ -999,51 +355,57 @@ async def delete_note(user_id: str, note_id: str, storage: ...) -> dict:
 
 ### Unit Tests
 
-Add to `tests/test_storage/`:
-
-1. **test_convert_freeform.py** - Freeform conversion round-trip
-2. **test_git_migration.py** - blocks/ → memory-blocks/ migration
-3. **test_user_config.py** - User config.toml handling
+| Test File | Coverage |
+|-----------|----------|
+| `tests/test_storage/test_blocks.py` | MD frontmatter parsing, body extraction |
+| `tests/test_storage/test_git.py` | Version history, restore, diff |
+| `tests/test_server/test_blocks_api.py` | Note-shaped API responses |
 
 ### Integration Tests
 
-Add to `tests/test_server/`:
+| Test | Description |
+|------|-------------|
+| `test_editor_round_trip` | Edit in UI → API → Git → Reload |
+| `test_diff_approval_flow` | Agent proposes → User approves → Committed |
+| `test_model_sync` | Enrollment → Models created in OpenWebUI |
 
-1. **test_autosave.py** - Autosave endpoint behavior
-2. **test_model_sync.py** - Module/agent model creation in OpenWebUI
+### Manual Testing Checklist
 
-### Manual Testing Steps
+- [ ] Edit block at `/memory/student`, verify autosave
+- [ ] Click undo, verify previous content loads
+- [ ] Agent proposes change, verify diff overlay appears
+- [ ] Approve diff, verify content updates
+- [ ] Enroll in course, verify module appears as model
 
-1. Create new user, verify directory structure
-2. Create freeform block, verify MD conversion
-3. Edit block in UI, verify autosave
-4. Use undo/redo, verify navigation
-5. Enroll in course, verify module models appear
-6. Verify background agents are hidden
+---
 
 ## Performance Considerations
 
-1. **Autosave debounce**: 200ms prevents excessive commits
-2. **Model sync**: Only on enrollment, not on every request
-3. **Folder lookup**: Cache folder_id per model in session
+1. **Autosave Debounce**: 200ms prevents excessive git commits
+2. **Lazy Loading**: Don't load TipTap until editor focused
+3. **Version Pagination**: Limit history to 20 versions initially
+4. **Model Sync**: Only on enrollment, not on every request
+
+---
 
 ## Migration Notes
 
-### Existing Users
+### Existing Blocks
 
-- `blocks/` → `memory-blocks/` migration happens on first access
-- Old directory kept if non-empty for backward compatibility
-- No data loss - files are moved, not copied
+Blocks created by ARI-80 are already in MD format. No migration needed.
 
-### OpenWebUI Models
+### convert.py Removal
 
-- Models created on enrollment, not retroactively
-- Existing users need re-enrollment or manual model creation
+The TOML↔MD conversion module has been deleted. Any code importing from `youlab_server.storage.convert` will fail. Known impact:
+- Removed from `blocks.py` imports
+- Test file `test_convert.py` deleted
+
+---
 
 ## References
 
-- Research documents: `thoughts/shared/research/2026-01-13-ARI-82-*.md`
-- Linear ticket: [ARI-82](https://linear.app/ariav/issue/ARI-82)
+- Research: `thoughts/searchable/shared/research/2026-01-13-ARI-82-*.md`
+- Linear: [ARI-82](https://linear.app/ariav/issue/ARI-82)
 - Related: ARI-79 (UI+Modules), ARI-80 (Memory MVP), ARI-81 (Demo-Ready)
-- OpenWebUI Notes: `OpenWebUI/open-webui/src/lib/components/notes/`
-- Current blocks: `src/youlab_server/storage/blocks.py`
+- NoteEditor: `OpenWebUI/open-webui/src/lib/components/notes/NoteEditor.svelte`
+- Storage: `src/youlab_server/storage/git.py`, `src/youlab_server/storage/blocks.py`

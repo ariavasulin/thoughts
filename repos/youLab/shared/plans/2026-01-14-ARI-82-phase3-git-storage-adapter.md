@@ -454,8 +454,8 @@ dependencies = [
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Tests pass: `make test-agent`
-- [ ] Type checking passes: `make check-agent`
+- [x] Tests pass: `make test-agent`
+- [x] Type checking passes: `make check-agent`
 - [ ] List endpoint returns blocks:
   ```bash
   curl -s $YOULAB_URL/api/you/notes/ -H "Authorization: Bearer $TOKEN" | jq length
