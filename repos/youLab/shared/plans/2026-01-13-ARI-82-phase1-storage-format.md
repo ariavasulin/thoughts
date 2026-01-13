@@ -439,14 +439,14 @@ def get_block_at_version(self, label: str, commit_sha: str) -> str | None:
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `make check-agent` passes (lint + typecheck)
-- [ ] New user init creates `memory-blocks/` directory
-- [ ] `write_block()` creates `.md` files with YAML frontmatter
-- [ ] `read_block()` returns full markdown content
-- [ ] `read_block_body()` returns body without frontmatter
-- [ ] `list_blocks()` finds `.md` files
-- [ ] `get_block_history()` works with new path
-- [ ] `get_block_at_version()` works with new path
+- [x] `make check-agent` passes (lint + typecheck)
+- [x] New user init creates `memory-blocks/` directory
+- [x] `write_block()` creates `.md` files with YAML frontmatter
+- [x] `read_block()` returns full markdown content
+- [x] `read_block_body()` returns body without frontmatter
+- [x] `list_blocks()` finds `.md` files
+- [x] `get_block_history()` works with new path
+- [x] `get_block_at_version()` works with new path
 
 #### Manual Verification:
 - [ ] Create a block, verify `.md` file has correct format
@@ -720,11 +720,11 @@ Delete the `_toml_to_memory_string()` method (was at lines 213-222) - no longer 
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `make check-agent` passes
-- [ ] `get_block_markdown()` returns full content
-- [ ] `get_block_body()` returns body without frontmatter
-- [ ] `update_block()` writes markdown and syncs to Letta
-- [ ] `approve_diff()` works with markdown content
+- [x] `make check-agent` passes
+- [x] `get_block_markdown()` returns full content
+- [x] `get_block_body()` returns body without frontmatter
+- [x] `update_block()` writes markdown and syncs to Letta
+- [x] `approve_diff()` works with markdown content
 
 #### Manual Verification:
 - [ ] Edit block via manager, verify `.md` file updated correctly
@@ -872,10 +872,10 @@ async def get_block_version(
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `make check-agent` passes
-- [ ] `GET /blocks/{label}` returns `content`, `body`, `metadata`
-- [ ] `PUT /blocks/{label}` accepts markdown content
-- [ ] `GET /blocks/{label}/versions/{sha}` returns markdown
+- [x] `make check-agent` passes
+- [x] `GET /blocks/{label}` returns `content`, `body`, `metadata`
+- [x] `PUT /blocks/{label}` accepts markdown content
+- [x] `GET /blocks/{label}/versions/{sha}` returns markdown
 
 #### Manual Verification:
 - [ ] API responses have correct structure
@@ -909,9 +909,9 @@ grep -r "from \.convert import" src/
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `convert.py` deleted
-- [ ] No import errors when running `make check-agent`
-- [ ] No references to `toml_to_markdown` or `markdown_to_toml`
+- [x] `convert.py` deleted
+- [x] No import errors when running `make check-agent`
+- [x] No references to `toml_to_markdown` or `markdown_to_toml`
 
 ---
 
@@ -1074,10 +1074,10 @@ Bob is an updated student.
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `make test-agent` passes
-- [ ] All tests use markdown format
-- [ ] No references to TOML content in tests
-- [ ] `test_convert.py` deleted
+- [x] `make test-agent` passes
+- [x] All tests use markdown format
+- [x] No references to TOML content in tests
+- [x] `test_convert.py` deleted
 
 ---
 
