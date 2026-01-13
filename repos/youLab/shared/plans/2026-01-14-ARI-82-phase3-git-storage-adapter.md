@@ -545,7 +545,7 @@ if manager.letta:
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Tests pass: `make test-agent`
+- [x] Tests pass: `make test-agent`
 - [ ] Title persists in frontmatter:
   ```bash
   curl -X POST $YOULAB_URL/api/you/notes/student/update \
