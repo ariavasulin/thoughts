@@ -2,7 +2,9 @@
 
 ## Overview
 
-Create course modules as visible OpenWebUI models and background agents as hidden models, with automatic folder organization for chat threads. This builds on the existing background agent folder mechanism in `agents_threads.py`.
+Create course modules as visible OpenWebUI models with automatic folder organization for chat threads. Each module becomes a selectable model that wraps the YouLab pipe with module-specific context.
+
+**Important Clarification**: Background agents are NOT chat agents - they are triggered processes that analyze conversations and propose diffs to memory blocks. They already have folder support for logging (`agents_threads.py`) and do NOT need OpenWebUI models.
 
 ## Current State Analysis
 
@@ -10,7 +12,7 @@ Create course modules as visible OpenWebUI models and background agents as hidde
 
 | Component | Location | What It Does |
 |-----------|----------|--------------|
-| Background agent folders | `agents_threads.py:168-221` | Creates OpenWebUI folders with `meta.type = "background_agent"`, auto-assigns chats |
+| Background agent folders | `agents_threads.py:168-221` | Creates OpenWebUI folders for background agent run logs |
 | OpenWebUIClient folder methods | `openwebui_client.py:306-374` | `ensure_folder()`, `create_chat(folder_id=...)`, `update_chat_folder()` |
 | Letta folder attachment | `agents.py:118-153` | Attaches shared/private Letta folders to agents from course config |
 | Course/Module config | `curriculum/schema.py` | Module metadata: `id`, `name`, `description`, `disabled_tools` |
@@ -19,9 +21,16 @@ Create course modules as visible OpenWebUI models and background agents as hidde
 
 1. **OpenWebUIClient model methods** - No CRUD for OpenWebUI models
 2. **Module → Model sync** - No mechanism to create models from module config
-3. **Background Agent → Hidden Model** - Only folders exist, not hidden models
-4. **Folder-Model linking** - No `folder_id` stored in model meta
-5. **Module chat auto-assignment** - Only background agents have auto-folder assignment
+3. **Folder-Model linking** - No `folder_id` stored in model meta
+4. **Module chat auto-assignment** - Chats with module models don't auto-assign to folders
+
+### Background Agents (Out of Scope)
+
+Background agents are **triggered processes**, not chat agents:
+- They receive: memory blocks, notes, conversation history, system prompt
+- They analyze and **propose diffs** to memory blocks
+- They do NOT need OpenWebUI models (users don't chat with them)
+- Folder support for run logs already exists in `agents_threads.py`
 
 ## Desired End State
 
@@ -29,15 +38,11 @@ After implementation:
 
 1. **Each module appears as a model** in OpenWebUI model selector
    - Users select "First Impression" model to start that module's chat
-   - Model wraps the YouLab pipe with module-specific system prompt
+   - Model wraps the YouLab pipe with module-specific context
 
-2. **Background agents are hidden models** in workspace but not in selector
-   - Admin can see them in `/workspace/models`
-   - Hidden from user-facing model selectors
-
-3. **Chats auto-organize into folders**
-   - Module chats → Module folder
-   - Background agent chats → Background agent folder
+2. **Chats auto-organize into module folders**
+   - Select "First Impression" model → chat appears in "First Impression" folder
+   - Provides clear organization by curriculum module
 
 ### Architecture Diagram
 
@@ -49,17 +54,9 @@ After implementation:
 │    1. Create OpenWebUI Folder (name = module.name)              │
 │    2. Create OpenWebUI Model:                                   │
 │       - base_model_id = "youlab-pipe"                           │
-│       - params.system = course.system + module.system           │
+│       - params.system = course.system + module context          │
 │       - meta.type = "module"                                    │
 │       - meta.module_id = module.id                              │
-│       - meta.folder_id = folder.id                              │
-│       - meta.hidden = false                                     │
-├─────────────────────────────────────────────────────────────────┤
-│  For each Background Task:                                       │
-│    1. Create OpenWebUI Folder (if not exists)                   │
-│    2. Create OpenWebUI Model:                                   │
-│       - meta.type = "background_agent"                          │
-│       - meta.hidden = true                                      │
 │       - meta.folder_id = folder.id                              │
 └─────────────────────────────────────────────────────────────────┘
                               │
@@ -76,10 +73,11 @@ After implementation:
 
 ## What We're NOT Doing
 
-1. **Not implementing nested folders** - Flat structure (one folder per module)
-2. **Not creating models for individual steps** - Only module-level models
-3. **Not modifying OpenWebUI frontend** - Use existing model selector and folder UI
-4. **Not bidirectional sync** - Models created once on enrollment, not continuously synced
+1. **Not creating models for background agents** - They're triggered processes, not chat agents
+2. **Not implementing nested folders** - Flat structure (one folder per module)
+3. **Not creating models for individual steps** - Only module-level models
+4. **Not modifying OpenWebUI frontend** - Use existing model selector and folder UI
+5. **Not bidirectional sync** - Models created once on enrollment, not continuously synced
 
 ---
 
@@ -337,78 +335,9 @@ async def create_module_models(
     return created_models
 
 
-async def create_background_agent_models(
-    course: CourseConfig,
-    user_id: str,
-    base_model_id: str,
-    openwebui_client: OpenWebUIClient,
-) -> list[str]:
-    """
-    Create hidden OpenWebUI models for background agents.
-
-    Args:
-        course: The course configuration.
-        user_id: User ID for model ownership.
-        base_model_id: The base model (YouLab pipe) ID.
-        openwebui_client: OpenWebUI API client.
-
-    Returns:
-        List of created model IDs.
-    """
-    created_models = []
-
-    for i, task in enumerate(course.tasks):
-        task_name = getattr(task, "name", f"background-task-{i}")
-        model_id = f"{course.id}:bg:{task_name}:{user_id}"
-
-        # Create folder for background agent chats
-        folder_id = await openwebui_client.ensure_folder(
-            task_name,
-            meta={"type": "background_agent", "task_name": task_name},
-        )
-
-        # Build system prompt from task config
-        system_prompt = task.system or f"Background agent: {task_name}"
-
-        # Create hidden model
-        await openwebui_client.ensure_model(
-            model_id=model_id,
-            name=task_name,
-            base_model_id=base_model_id,
-            params={"system": system_prompt},
-            meta={
-                "type": "background_agent",
-                "task_name": task_name,
-                "course_id": course.id,
-                "folder_id": folder_id,
-                "hidden": True,  # Hidden from model selector
-            },
-        )
-
-        created_models.append(model_id)
-        log.info(
-            "background_model_created",
-            model_id=model_id,
-            task=task_name,
-            folder_id=folder_id,
-        )
-
-    return created_models
 ```
 
-#### 2. Add `name` field to TaskConfig
-**File**: `src/youlab_server/curriculum/schema.py`
-
-Add to `TaskConfig` class (around line 169):
-
-```python
-class TaskConfig(BaseModel):
-    """Background task configuration (v2 format)."""
-
-    name: str = ""  # Add this field
-
-    # ... rest of existing fields
-```
+Note: Background agents do NOT need models - they are triggered processes that propose diffs, not chat agents. Their folder support for run logs already exists in `agents_threads.py`.
 
 ### Success Criteria
 
@@ -434,10 +363,7 @@ Wire the model creation into the agent enrollment flow.
 
 Add import at top:
 ```python
-from youlab_server.server.sync.models import (
-    create_module_models,
-    create_background_agent_models,
-)
+from youlab_server.server.sync.models import create_module_models
 ```
 
 Update `create_agent_from_curriculum()` method (around line 340, after folder attachment):
@@ -447,7 +373,6 @@ Update `create_agent_from_curriculum()` method (around line 340, after folder at
 
 # Create module models in OpenWebUI
 module_models: list[str] = []
-background_models: list[str] = []
 
 if sync_service and sync_service.openwebui:
     try:
@@ -462,18 +387,10 @@ if sync_service and sync_service.openwebui:
             openwebui_client=sync_service.openwebui,
         )
 
-        background_models = await create_background_agent_models(
-            course=course,
-            user_id=user_id,
-            base_model_id=base_model_id,
-            openwebui_client=sync_service.openwebui,
-        )
-
         log.info(
             "enrollment_models_created",
             agent_id=agent_id,
             module_models=len(module_models),
-            background_models=len(background_models),
         )
     except Exception as e:
         log.warning("model_creation_failed", error=str(e))
@@ -500,7 +417,6 @@ OPENWEBUI_PIPE_MODEL_ID: str = Field(
 #### Manual Verification:
 - [ ] New user enrollment creates module models
 - [ ] Models appear in OpenWebUI model selector
-- [ ] Background agent models are hidden
 
 **Implementation Note**: After completing this phase and all automated verification passes, pause here for manual confirmation from the human that the models appear correctly in OpenWebUI before proceeding to the next phase.
 
@@ -676,10 +592,8 @@ log.info(
 
 - [ ] Fresh user enrollment: all module models appear
 - [ ] Model selector shows module names
-- [ ] Background agent models NOT in selector
 - [ ] Start chat with "First Impression" → chat in "First Impression" folder
-- [ ] Start chat with base "YouLab Tutor" → chat NOT auto-assigned
-- [ ] Admin can see hidden background agent models in workspace
+- [ ] Start chat with base "YouLab Tutor" → chat NOT auto-assigned (stays in root)
 
 ---
 
@@ -712,7 +626,7 @@ Existing users enrolled before Phase 5 will not have module models. Options:
 | Flat vs nested folders | Flat - one folder per module |
 | Auto-assignment mechanism | Pipe middleware (after chat creation) |
 | Folder naming | Module display name (e.g., "First Impression") |
-| Background folder visibility | Visible but can be collapsed by user |
+| Background agent models | NOT needed - they're triggered processes, not chat agents |
 
 ---
 
