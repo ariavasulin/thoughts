@@ -478,10 +478,10 @@ tools = ["query_honcho", "propose_edit"]
 - [x] Lint passes: `make lint-fix`
 
 #### Manual Verification:
-- [ ] Manual trigger creates agent and processes: `curl -X POST http://localhost:8100/background/poc-progress-tracker/run`
-- [ ] Agent logs show tool calls (query_honcho, edit_memory_block)
-- [ ] PendingDiff visible in API: `curl http://localhost:8100/users/7a41.../blocks/progress/diffs`
-- [ ] Approving diff creates git commit
+- [x] Manual trigger creates agent and processes: `curl -X POST http://localhost:8100/background/poc-progress-tracker/run` (agent created, instruction sent)
+- [ ] **BLOCKED**: Agent logs show tool calls (query_honcho, edit_memory_block) - tools fail in Letta sandbox
+- [ ] **BLOCKED**: PendingDiff visible in API - cannot create diffs until tools work
+- [ ] **BLOCKED**: Approving diff creates git commit - depends on diffs being created
 
 ### Manual Testing Commands
 
@@ -608,12 +608,38 @@ Already included in Phase 1.
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `grep -r "TODO(ARI-85)" src/` returns at least 3 locations
-- [ ] Lint passes (TODOs don't break linting)
+- [x] `grep -r "TODO(ARI-85)" src/` returns at least 3 locations (actually 6 locations)
+- [x] Lint passes (TODOs don't break linting)
 
 ---
 
 ## Phase 5: Manual Testing and Validation
+
+### Current Status (2026-01-16)
+
+**What Works:**
+- ✅ POC course configuration loads correctly
+- ✅ Memory block files exist and parse correctly
+- ✅ Background agent infrastructure (factory, runner) is functional
+- ✅ Manual trigger endpoint works: `POST /background/poc-progress-tracker/run`
+- ✅ Agent is created/deleted fresh each run to avoid message history issues
+- ✅ Agent receives instruction with current memory block context
+
+**What's Blocked (Tools fail in Letta sandbox):**
+- ❌ Tools (`query_honcho`, `edit_memory_block`) fail when agent tries to use them
+- ❌ Root cause: Tools import from `youlab_server` which isn't available in Letta's sandbox
+- ❌ PendingDiffs cannot be created because `edit_memory_block` fails
+- ❌ Agent cannot analyze conversation history because `query_honcho` fails
+
+**Planned Fix:**
+Create HTTP-based tool versions that call YouLab server endpoints:
+- `POST /tools/query_honcho` - proxy to Honcho dialectic
+- `POST /tools/edit_memory_block` - create PendingDiff via API
+
+See TODOs in:
+- `src/youlab_server/tools/dialectic.py`
+- `src/youlab_server/tools/memory.py`
+- `src/youlab_server/background/factory.py`
 
 ### Overview
 Validate the complete flow works end-to-end.
@@ -677,12 +703,12 @@ git log --oneline -5
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] All tests above pass
-- [ ] `make verify-agent` passes
+- [x] Course loads: `uv run python -c "from youlab_server.curriculum import curriculum; c = curriculum.load_course('poc-tutor'); print(f'Loaded: {c.name}')"`
+- [x] `make verify-agent` passes
 
 #### Manual Verification:
-- [ ] Complete flow works: trigger → query → diff → approve → commit
-- [ ] OpenWebUI shows updated memory blocks (if integrated)
+- [ ] **BLOCKED**: Complete flow works: trigger → query → diff → approve → commit (blocked by Letta sandbox tooling issue)
+- [ ] **BLOCKED**: OpenWebUI shows updated memory blocks (blocked by tooling issue)
 
 ---
 
