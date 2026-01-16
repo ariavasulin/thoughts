@@ -235,10 +235,10 @@ guidance = [
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] Course loads without errors: `uv run python -c "from youlab_server.curriculum import curriculum; c = curriculum.load_course('poc-tutor'); print(f'Loaded: {c.name}')"`
-- [ ] Blocks parsed correctly: Verify 3 blocks exist with correct fields
-- [ ] Task parsed correctly: Verify task config has correct query targets
-- [ ] Lint passes: `make lint-fix`
+- [x] Course loads without errors: `uv run python -c "from youlab_server.curriculum import curriculum; c = curriculum.load_course('poc-tutor'); print(f'Loaded: {c.name}')"`
+- [x] Blocks parsed correctly: Verify 3 blocks exist with correct fields
+- [x] Task parsed correctly: Verify task config has correct query targets
+- [x] Lint passes: `make lint-fix`
 
 #### Manual Verification:
 - [ ] Review TOML structure matches v2 schema
@@ -326,8 +326,8 @@ After creating files, commit them to the user's git repo.
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] All 3 block files exist in user's memory-blocks directory
-- [ ] Files parse correctly with frontmatter
+- [x] All 3 block files exist in user's memory-blocks directory
+- [x] Files parse correctly with frontmatter
 - [ ] API returns all blocks: `curl http://localhost:8100/users/7a41011b-5255-4225-b75e-1d8484d0e37f/blocks`
 
 #### Manual Verification:
@@ -335,115 +335,215 @@ After creating files, commit them to the user's git repo.
 
 ---
 
-## Phase 3: Integrate Background Agent with UserBlockManager
+## Phase 3: Letta Agent-Based Background Agents (Architecture Pivot)
 
 ### Overview
-**This is the critical change.** Currently background agents use `MemoryEnricher` which bypasses git storage. We need them to use `UserBlockManager.propose_edit()` to create `PendingDiff` objects.
+
+**PARADIGM SHIFT**: The original query-based approach is being retired. Background agents should be **actual Letta agents** with:
+- System prompt defining their purpose
+- Access to current memory blocks
+- Tools: `query_honcho`, `propose_edit`
+- Multi-step reasoning capability
+
+### Old vs New Architecture
+
+**Old (RETIRED):**
+```
+BackgroundAgentRunner
+  → For each query in config:
+    → Honcho.query_dialectic(question)  # Single LLM call
+    → Write insight directly to block
+```
+
+**New (Letta Agent-Based):**
+```
+BackgroundAgentRunner
+  → Create/get dedicated Letta agent for this task
+  → Inject current memory block contents into context
+  → Provide tools: query_honcho, propose_edit
+  → Send instruction: "Analyze conversation history and update memory as needed"
+  → Agent reasons, calls tools, creates PendingDiffs
+```
+
+### Benefits
+1. Agent can reason about *what* to query (not predetermined)
+2. Agent can decide *what* to update based on its reasoning
+3. Agent can do multiple rounds of query/update
+4. Consistent with interactive agent architecture
+5. Reuses existing `query_honcho` and `edit_memory_block` tools
 
 ### Changes Required
 
-#### 1. Add method to UserBlockManager for background agent edits
-**File**: `src/youlab_server/storage/blocks.py`
+#### 1. Update TaskConfig schema to support full agent definition
+**File**: `src/youlab_server/curriculum/schema.py`
 
-Add a new method that creates PendingDiffs from background agent queries:
-
+The schema already has `system` and `tools` fields - they just need to be used:
 ```python
-def propose_background_edit(
-    self,
-    agent_id: str,
-    block_label: str,
-    field: str | None,
-    content: str,
-    operation: str = "append",
-    reasoning: str = "",
-    source_query: str | None = None,
-) -> PendingDiff:
-    """
-    Propose a memory edit from a background agent.
+class TaskConfig(BaseModel):
+    # ... existing fields ...
+    system: str | None = None  # System prompt for the background agent
+    tools: list[str] = Field(default_factory=list)  # Tools the agent can use
 
-    Similar to propose_edit() but with background-specific metadata.
-    Creates a PendingDiff that requires user approval.
-
-    Args:
-        agent_id: Background agent identifier (e.g., "background:poc-progress-tracker")
-        block_label: Target block label
-        field: Target field within block (optional for full_replace)
-        content: Content to add/replace
-        operation: One of "append", "replace", "full_replace"
-        reasoning: Why this edit is proposed
-        source_query: The dialectic query that generated this content
-
-    Returns:
-        Created PendingDiff object
-    """
-    # Implementation similar to propose_edit() but with background-specific handling
+    # DEPRECATED - remove queries in favor of agent reasoning
+    queries: list[QueryConfig] = Field(default_factory=list)
 ```
 
-#### 2. Update BackgroundAgentRunner to use UserBlockManager
+#### 2. Create BackgroundAgentFactory
+**File**: `src/youlab_server/background/factory.py` (NEW)
+
+Factory to create/retrieve dedicated Letta agents for background tasks:
+```python
+class BackgroundAgentFactory:
+    """Creates Letta agents for background tasks."""
+
+    def get_or_create_agent(
+        self,
+        task_name: str,
+        user_id: str,
+        system_prompt: str,
+        tools: list[str],
+        memory_blocks: dict[str, str],  # Current block contents
+    ) -> str:
+        """
+        Get or create a Letta agent for this background task.
+
+        Agent naming: background_{task_name}_{user_id}
+
+        Returns agent_id
+        """
+```
+
+#### 3. Rewrite BackgroundAgentRunner
 **File**: `src/youlab_server/background/runner.py`
 
-Replace `MemoryEnricher.enrich()` with `UserBlockManager.propose_background_edit()`:
-
+Replace query-based execution with agent-based execution:
 ```python
-# Current (line 212-220):
-enrich_result = self.enricher.enrich(
-    agent_id=target_agent_id,
-    block=query.target_block,
-    field=query.target_field,
-    content=response.insight,
-    strategy=strategy,
-    source=f"background:{agent_id}",
-    source_query=query.question,
-)
+async def _process_user(self, config: TaskConfig, user_id: str, ...) -> None:
+    # 1. Get current memory block contents
+    blocks = self._get_user_blocks(user_id)
 
-# New:
-block_manager = UserBlockManager(user_id, user_storage)
-diff = block_manager.propose_background_edit(
-    agent_id=f"background:{agent_id}",
-    block_label=query.target_block,
-    field=query.target_field,
-    content=response.insight,
-    operation=strategy.value,  # "append", "replace", etc.
-    reasoning=f"Background agent insight from query: {query.question[:100]}...",
-    source_query=query.question,
-)
+    # 2. Get or create background agent
+    agent_id = self.factory.get_or_create_agent(
+        task_name=config.name,
+        user_id=user_id,
+        system_prompt=config.system,
+        tools=config.tools,  # ["query_honcho", "propose_edit"]
+        memory_blocks=blocks,
+    )
+
+    # 3. Send instruction message
+    instruction = self._build_instruction(config, blocks)
+    response = self.letta.send_message(agent_id, instruction)
+
+    # Agent will call tools as needed:
+    # - query_honcho to analyze conversation
+    # - propose_edit to create PendingDiffs
 ```
 
-#### 3. Inject GitUserStorageManager into runner
-**File**: `src/youlab_server/background/runner.py`
+#### 4. Ensure `propose_edit` tool creates PendingDiffs
+The existing `edit_memory_block` tool already creates PendingDiffs when the agent is flagged as background. Verify this works or create a dedicated `propose_edit` tool variant.
 
-Runner needs access to `GitUserStorageManager` to create `UserBlockManager` instances:
+#### 5. Update POC course.toml
+```toml
+[[task]]
+name = "poc-progress-tracker"
+manual = true
+agent_types = ["poc-tutor"]
 
-```python
-def __init__(
-    self,
-    letta_client: Any,
-    honcho_client: HonchoClient | None,
-    storage_manager: GitUserStorageManager,  # ADD THIS
-) -> None:
-    self.letta = letta_client
-    self.honcho = honcho_client
-    self.storage_manager = storage_manager  # ADD THIS
-    self.enricher = MemoryEnricher(letta_client)  # Keep for fallback/legacy
+# Full agent definition (NEW)
+system = """You are a background agent that reviews conversation history and updates memory blocks.
+
+Your job:
+1. Query conversation history to understand recent progress
+2. Update the progress and operating_manual blocks with insights
+3. Be concise - only add meaningful observations
+
+Available memory blocks:
+- progress: Track student progress and notes
+- operating_manual: Effective strategies and things to avoid
+"""
+tools = ["query_honcho", "propose_edit"]
+
+# DEPRECATED - remove deterministic queries
+# queries = [...]
 ```
-
-#### 4. Update server startup to inject storage manager
-**File**: `src/youlab_server/server/main.py` or wherever runner is instantiated
 
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] Unit tests pass for new `propose_background_edit` method
-- [ ] Runner correctly creates PendingDiff objects
-- [ ] Typecheck passes: `make check-agent`
-- [ ] Lint passes: `make lint-fix`
+- [x] BackgroundAgentFactory creates agents correctly
+- [x] Runner sends messages and agent calls tools
+- [x] `propose_edit` tool creates PendingDiff objects (uses existing edit_memory_block)
+- [x] Typecheck passes: `make check-agent`
+- [x] Lint passes: `make lint-fix`
 
 #### Manual Verification:
-- [ ] Manual trigger creates PendingDiff: `curl -X POST http://localhost:8100/background/poc-progress-tracker/run`
+- [ ] Manual trigger creates agent and processes: `curl -X POST http://localhost:8100/background/poc-progress-tracker/run`
+- [ ] Agent logs show tool calls (query_honcho, edit_memory_block)
 - [ ] PendingDiff visible in API: `curl http://localhost:8100/users/7a41.../blocks/progress/diffs`
 - [ ] Approving diff creates git commit
 
-**Implementation Note**: This phase is the most complex. Pause for manual testing before proceeding.
+### Manual Testing Commands
+
+**Test User ID**: `7a41011b-5255-4225-b75e-1d8484d0e37f`
+
+**1. List available background agents:**
+```bash
+curl -s http://localhost:8100/background/agents | jq .
+```
+Expected: Should show `poc-progress-tracker` with `course_id: poc-tutor`
+
+**2. Trigger background task:**
+```bash
+curl -X POST http://localhost:8100/background/poc-progress-tracker/run \
+  -H "Content-Type: application/json" \
+  -d '{"user_ids": ["7a41011b-5255-4225-b75e-1d8484d0e37f"]}' | jq .
+```
+Expected response fields:
+- `users_processed: 1`
+- `enrichments_applied: 1` (if agent ran successfully)
+- `errors: []` (empty if successful)
+
+**3. Check for pending diffs:**
+```bash
+curl -s http://localhost:8100/users/7a41011b-5255-4225-b75e-1d8484d0e37f/blocks | jq .
+```
+Look for blocks with `pending_diffs > 0`
+
+**4. View specific block diffs:**
+```bash
+curl -s http://localhost:8100/users/7a41011b-5255-4225-b75e-1d8484d0e37f/blocks/progress/diffs | jq .
+```
+
+**5. Approve a diff (replace DIFF_ID):**
+```bash
+curl -X POST http://localhost:8100/users/7a41011b-5255-4225-b75e-1d8484d0e37f/blocks/progress/diffs/DIFF_ID/approve | jq .
+```
+
+**6. Verify git commit:**
+```bash
+cd .data/users/7a41011b-5255-4225-b75e-1d8484d0e37f && git log --oneline -3
+```
+
+### What to look for in server logs:
+- `background_task_started` with `execution_mode=agent`
+- `background_agent_created` or `background_agent_found`
+- `background_agent_executing`
+- Tool calls from the agent (query_honcho, edit_memory_block)
+- `pending_diff_created` or `memory_edit_proposed`
+- `background_task_completed` with `enrichments_applied=1`
+
+### Troubleshooting:
+- If `users_processed: 0`: No agents found matching `youlab_*_poc-tutor` pattern
+- If agent fails: Check Letta server is running and tools are registered
+- If no diffs created: Agent may not have called edit_memory_block tool
+
+### Migration Notes
+- Keep old `queries` field for backwards compatibility but deprecate
+- Old configs with only `queries` fall back to legacy behavior
+- New configs with `system` + `tools` use agent-based execution
+
+**Implementation Note**: This is a significant architecture change. Consider creating a new ticket for full implementation and using a minimal version for POC.
 
 ---
 
