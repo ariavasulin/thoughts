@@ -572,10 +572,10 @@ edit_memory_block = sandbox_edit_memory_block
 
 ### Automated Verification
 
-- [ ] `make check-agent` passes (lint + typecheck)
-- [ ] New endpoints return correct schemas
-- [ ] Sandbox tools use only stdlib imports
-- [ ] No `from youlab_server import ...` in sandbox.py
+- [x] `make check-agent` passes (lint + typecheck)
+- [x] New endpoints return correct schemas
+- [x] Sandbox tools use only stdlib imports
+- [x] No `from youlab_server import ...` in sandbox.py
 
 ### Manual Verification
 
