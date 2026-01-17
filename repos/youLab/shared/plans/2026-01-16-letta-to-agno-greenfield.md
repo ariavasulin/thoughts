@@ -28,8 +28,35 @@ Replace Letta with Agno via greenfield rebuild, eliminating ~20% of the codebase
 - Pending diff system (`storage/diffs.py`) - agent-proposed changes
 - Block schema system (`curriculum/`) - TOML-defined, Pydantic-generated
 - Course configuration (`config/courses/`) - TOML structure
-- Honcho client base (`honcho/client.py`) - just needs `get_context()`
+- Honcho client base (`honcho/client.py`) - needs session scoping updates
 - **OpenWebUI frontend** - Memory UI, diff approval, module view already built
+
+### Schema Changes (Minimal Extensions)
+
+**Shared blocks** (`config/blocks/`):
+```
+config/
+  blocks/                    # NEW: Shared block schemas
+    student.toml
+    engagement_strategy.toml
+  courses/
+    college-essay/
+      course.toml            # References shared + defines course-specific inline
+      modules/
+```
+
+**In course.toml** - reference shared blocks:
+```toml
+shared_blocks = ["student", "engagement_strategy"]
+
+[block.journey]  # Course-specific, inline as before
+hidden = true    # NEW: Don't show in UI
+# ...
+```
+
+**Block schema additions**:
+- `hidden: bool` - Controls visibility in OpenWebUI memory UI
+- `shared_blocks: list[str]` - References to `config/blocks/{name}.toml`
 
 ### Files to Delete (2,445 lines)
 
@@ -120,11 +147,20 @@ src/youlab_server/
 ## What We're NOT Doing
 
 - Rebuilding OpenWebUI frontend (already done)
-- Changing course TOML structure
 - Changing git storage format
 - Changing pending diff workflow
-- Adding new features (pure migration)
-- Changing Honcho's role (still dialectic + context)
+- Adding new features beyond migration requirements
+
+## Minimal Schema Changes
+
+These are additive changes to support the new architecture:
+
+| Change | Location | Purpose |
+|--------|----------|---------|
+| `shared_blocks` field | `course.toml` | Reference shared block schemas |
+| `hidden` field | Block schema | Control UI visibility |
+| `config/blocks/` dir | New directory | Shared block definitions |
+| Honcho session key | Runtime | Module-scoped sessions |
 
 ## Design Principles
 
@@ -150,18 +186,46 @@ OpenWebUI sends full thread history. We use it as-is:
 ### 3. Stateless Agents, Stateful Context
 
 Agno agents are stateless (created per-request). State lives in:
-- **Honcho** - Conversation history, peer representations
+- **Honcho** - Conversation history, peer representations (module-scoped sessions)
 - **Git** - Memory blocks, pending diffs
 - **Session state** - Per-request context passed to tools
 
-### 4. In-Process Tools
+### 4. Module-Scoped Honcho Sessions
+
+Honcho sessions are scoped hierarchically for better dialectic queries:
+
+```python
+def get_honcho_session_key(user_id, course_id, module_id, chat_id) -> str:
+    if module_id and course_id:
+        # Full curriculum course - module-specific insights
+        return f"module_{user_id}_{course_id}_{module_id}"
+    elif course_id:
+        # Course without modules - course-wide insights
+        return f"course_{user_id}_{course_id}"
+    elif chat_id:
+        # No course context - thread-specific (legacy)
+        return f"chat_{chat_id}"
+    else:
+        return f"user_{user_id}"
+```
+
+**At message persist time**:
+- Read `module_id` from journey block (current curriculum position)
+- Include `module_id` in message metadata
+- Use hierarchical session key
+
+**Benefit**: `query_honcho` returns module-specific insights ("in this module, the student has struggled with...")
+
+**No journey block?** Falls back to course-scoped or chat-scoped sessions. Modules are optional.
+
+### 5. In-Process Tools
 
 No sandboxing. Tools run in the same process as the server:
 - No HTTP tool duplication needed
 - No global state needed
 - `RunContext.session_state` provides all context
 
-### 5. Incremental, Testable Phases
+### 6. Incremental, Testable Phases
 
 Each phase produces a working system that can be tested against:
 - Existing OpenWebUI frontend
@@ -257,12 +321,12 @@ def _build_system_prompt(base_prompt: str, blocks: dict[str, str]) -> str:
 """
 ```
 
-#### 3. Migrate edit_memory_block Tool
+#### 3. Migrate edit_memory_block Tool (with Schema Validation)
 
 **File**: `src/youlab_server/tools/memory.py` (rewrite)
 
 ```python
-"""Memory block editing tool using Agno RunContext."""
+"""Memory block editing tool using Agno RunContext with schema validation."""
 
 from agno.tools import tool
 from agno.run.response import RunContext
@@ -294,8 +358,19 @@ def edit_memory_block(
     """
     from youlab_server.storage import get_storage_manager
     from youlab_server.storage.blocks import UserBlockManager
+    from youlab_server.curriculum import get_curriculum_loader
 
     user_id = ctx.session_state["user_id"]
+    course_id = ctx.session_state.get("course_id")
+
+    # Schema validation for structured blocks
+    if course_id:
+        loader = get_curriculum_loader()
+        schema = loader.get_block_schema(course_id, block)
+        if schema and field in schema.fields:
+            error = _validate_field(schema.fields[field], content)
+            if error:
+                return f"Invalid value for {block}.{field}: {error}"
 
     storage_manager = get_storage_manager()
     user_storage = storage_manager.get(user_id)
@@ -315,7 +390,36 @@ def edit_memory_block(
     )
 
     return f"Proposed change to {block}.{field} (diff: {diff.id[:8]}). Awaiting user review."
+
+
+def _validate_field(field_schema, value: str) -> str | None:
+    """Validate value against field schema. Returns error message or None."""
+    # Type validation
+    if field_schema.type == "string":
+        pass  # All values are strings from LLM
+    elif field_schema.type == "int":
+        try:
+            int(value)
+        except ValueError:
+            return f"Expected integer, got '{value}'"
+    elif field_schema.type == "list":
+        # Expect comma-separated or JSON array
+        if field_schema.max:
+            items = [x.strip() for x in value.split(",") if x.strip()]
+            if len(items) > field_schema.max:
+                return f"List exceeds max length {field_schema.max}"
+
+    # Enum validation
+    if field_schema.options and value not in field_schema.options:
+        return f"Must be one of: {field_schema.options}"
+
+    return None
 ```
+
+**Schema loading** requires `CurriculumLoader.get_block_schema()` method:
+- Checks `config/blocks/{block}.toml` for shared blocks
+- Checks course's inline `[block.{name}]` for course-specific
+- Returns merged schema or None if freeform
 
 #### 4. Migrate query_honcho Tool
 
@@ -475,6 +579,70 @@ __all__ = [
 ]
 ```
 
+#### 7. Add Shared Block Loading to CurriculumLoader
+
+**File**: `src/youlab_server/curriculum/loader.py` (extend)
+
+Add method to load block schemas with shared block support:
+
+```python
+def get_block_schema(self, course_id: str, block_name: str) -> BlockSchema | None:
+    """Get block schema, checking shared blocks first then course-specific.
+
+    Args:
+        course_id: Course identifier
+        block_name: Block name (e.g., "student", "journey")
+
+    Returns:
+        BlockSchema if found, None for freeform blocks
+    """
+    # Check shared blocks first
+    shared_path = self.config_dir.parent / "blocks" / f"{block_name}.toml"
+    if shared_path.exists():
+        return self._load_block_schema(shared_path)
+
+    # Check course-specific inline blocks
+    course = self.get_course(course_id)
+    if course and block_name in course.blocks:
+        return course.blocks[block_name]
+
+    return None  # Freeform block, no schema
+```
+
+#### 8. Update Schemas for Shared Blocks and Hidden Flag
+
+**File**: `src/youlab_server/curriculum/schema.py`
+
+```python
+class BlockSchema(BaseModel):
+    """Schema for a memory block."""
+
+    label: str
+    description: str = ""
+    shared: bool = False
+    hidden: bool = False  # NEW: Don't show in OpenWebUI UI
+    fields: dict[str, FieldSchema] = Field(default_factory=dict)
+
+
+class CourseConfig(BaseModel):
+    """Complete course configuration."""
+
+    agent: AgentConfig = Field(default_factory=AgentConfig)
+
+    # Shared block references (loaded from config/blocks/)
+    shared_blocks: list[str] = Field(default_factory=list)  # NEW
+
+    # Course-specific blocks (inline [block.*] sections)
+    blocks: dict[str, BlockSchema] = Field(default_factory=dict)
+
+    # ... rest unchanged
+```
+
+**Loader behavior** (in `curriculum/loader.py`):
+1. Load shared blocks from `config/blocks/{name}.toml` for each name in `shared_blocks`
+2. Load inline `[block.*]` sections from `course.toml`
+3. Merge into `CourseConfig.blocks` (inline overrides shared if same name)
+
 ### Success Criteria
 
 #### Automated Verification:
@@ -482,10 +650,15 @@ __all__ = [
 - [ ] `make check-agent` passes (lint + typecheck)
 - [ ] New tool modules import without error: `python -c "from youlab_server.tools import edit_memory_block, query_honcho, advance_lesson"`
 - [ ] Agent factory imports: `python -c "from youlab_server.agents.agno import create_agent"`
+- [ ] Schema validation rejects invalid journey.status: test with `status="invalid"`
+- [ ] Shared block loading: `loader.get_block_schema("college-essay", "student")` returns schema
+- [ ] Hidden flag parsed: `schema.hidden == True` for journey block
 
 #### Manual Verification:
 - [ ] Create agent in Python REPL and verify session_state is accessible
 - [ ] Tools receive RunContext with correct session_state values
+- [ ] `edit_memory_block` returns error for invalid enum value
+- [ ] Hidden blocks don't appear in OpenWebUI memory UI
 
 ---
 
@@ -582,11 +755,11 @@ UserBlockManager(user_id, user_storage)
 
 ---
 
-## Phase 3: Streaming Pipeline
+## Phase 3: Streaming Pipeline + Module-Scoped Honcho
 
 ### Overview
 
-Replace the three-layer Letta streaming with a single Agno streaming layer. OpenWebUI thread history is used as-is.
+Replace the three-layer Letta streaming with a single Agno streaming layer. OpenWebUI thread history is used as-is. Honcho persistence uses module-scoped sessions.
 
 ### Changes Required
 
@@ -603,11 +776,13 @@ async def chat_stream(request: StreamChatRequest):
 
     OpenWebUI thread history is passed through directly.
     Memory blocks are loaded from git and injected into system prompt.
+    Honcho persistence uses module-scoped sessions.
     """
     from youlab_server.agents.agno import create_agent
     from youlab_server.curriculum import get_curriculum_loader
     from youlab_server.storage import get_storage_manager
     from youlab_server.storage.blocks import UserBlockManager
+    from youlab_server.honcho.client import get_honcho_session_key
 
     user_id = request.user_id
     chat_id = request.chat_id
@@ -616,12 +791,16 @@ async def chat_stream(request: StreamChatRequest):
 
     # Load memory blocks from git storage
     memory_blocks = {}
+    module_id = None  # For Honcho session scoping
     storage_manager = get_storage_manager()
     user_storage = storage_manager.get(user_id)
     if user_storage:
         manager = UserBlockManager(user_id, user_storage)
         for label in manager.list_blocks():
             memory_blocks[label] = manager.get_block_body(label)
+        # Extract module_id from journey block for Honcho session scoping
+        if "journey" in memory_blocks:
+            module_id = _parse_module_id(memory_blocks["journey"])
 
     # Get system prompt from course config
     loader = get_curriculum_loader()
@@ -638,14 +817,20 @@ async def chat_stream(request: StreamChatRequest):
         system_prompt=system_prompt,
     )
 
-    # Fire-and-forget: persist latest user message to Honcho
-    if app.state.honcho_client and chat_id and messages:
+    # Compute module-scoped Honcho session key
+    session_key = get_honcho_session_key(user_id, course_id, module_id, chat_id)
+
+    # Fire-and-forget: persist latest user message to Honcho (module-scoped)
+    if app.state.honcho_client and messages:
         latest_user_msg = messages[-1].get("content", "") if messages[-1].get("role") == "user" else ""
         if latest_user_msg:
             create_persist_task(
                 app.state.honcho_client,
-                user_id, chat_id, latest_user_msg,
+                session_key=session_key,
+                user_id=user_id,
+                message=latest_user_msg,
                 is_user=True,
+                metadata={"course_id": course_id, "module_id": module_id},
             )
 
     async def stream_response():
@@ -664,13 +849,16 @@ async def chat_stream(request: StreamChatRequest):
 
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
-        # Fire-and-forget: persist agent response
+        # Fire-and-forget: persist agent response (module-scoped)
         response_text = "".join(full_response)
-        if app.state.honcho_client and chat_id and response_text:
+        if app.state.honcho_client and response_text:
             create_persist_task(
                 app.state.honcho_client,
-                user_id, chat_id, response_text,
+                session_key=session_key,
+                user_id=user_id,
+                message=response_text,
                 is_user=False,
+                metadata={"course_id": course_id, "module_id": module_id},
             )
 
     return StreamingResponse(
@@ -678,9 +866,68 @@ async def chat_stream(request: StreamChatRequest):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+def _parse_module_id(journey_content: str) -> str | None:
+    """Extract module_id from journey block content."""
+    for line in journey_content.split("\n"):
+        if line.strip().startswith("module_id:"):
+            return line.split(":", 1)[1].strip()
+    return None
 ```
 
-#### 2. Create Agno Pipe for OpenWebUI
+#### 2. Add Module-Scoped Session Key Helper
+
+**File**: `src/youlab_server/honcho/client.py` (add function)
+
+```python
+def get_honcho_session_key(
+    user_id: str,
+    course_id: str | None,
+    module_id: str | None,
+    chat_id: str | None,
+) -> str:
+    """Get hierarchical Honcho session key.
+
+    Priority:
+    1. module_{user}_{course}_{module} - Full curriculum course
+    2. course_{user}_{course} - Course without modules
+    3. chat_{chat_id} - No course context (legacy)
+    4. user_{user_id} - Last resort
+    """
+    if module_id and course_id:
+        return f"module_{user_id}_{course_id}_{module_id}"
+    elif course_id:
+        return f"course_{user_id}_{course_id}"
+    elif chat_id:
+        return f"chat_{chat_id}"
+    else:
+        return f"user_{user_id}"
+```
+
+#### 3. Update HonchoClient.persist Methods
+
+**File**: `src/youlab_server/honcho/client.py`
+
+Update `persist_user_message` and `persist_agent_message` to accept `session_key` and `metadata`:
+
+```python
+async def persist_user_message(
+    self,
+    session_key: str,  # Changed from chat_id
+    user_id: str,
+    message: str,
+    metadata: dict | None = None,
+) -> None:
+    """Persist user message to Honcho with module-scoped session."""
+    student_peer = self.client.peer(self._get_student_peer_id(user_id))
+    session = self.client.session(session_key)  # Use session_key directly
+
+    msg_metadata = metadata or {}
+    session.add_messages([student_peer.message(message, metadata=msg_metadata)])
+```
+
+#### 4. Create Agno Pipe for OpenWebUI
 
 **File**: `src/youlab_server/pipelines/agno_pipe.py` (new)
 
@@ -828,13 +1075,18 @@ async def lifespan(app: FastAPI):
 - [ ] `make check-agent` passes
 - [ ] Server starts without Letta: `uv run youlab-server` (should not require Letta server)
 - [ ] `/chat/stream` endpoint responds: `curl -X POST localhost:8100/chat/stream -H "Content-Type: application/json" -d '{"user_id": "test", "message": "hello"}'`
+- [ ] `get_honcho_session_key()` returns correct keys for each scenario:
+  - With module_id + course_id → `module_{user}_{course}_{module}`
+  - With course_id only → `course_{user}_{course}`
+  - With chat_id only → `chat_{chat_id}`
 
 #### Manual Verification:
 - [ ] Stream a message through OpenWebUI with the new pipe
 - [ ] Verify response streams correctly
-- [ ] Verify messages are persisted to Honcho
+- [ ] Verify messages are persisted to Honcho with module-scoped session
 - [ ] Verify memory blocks are included in agent context
 - [ ] Verify tool calls appear as status updates in UI
+- [ ] Verify `query_honcho` returns module-specific insights (not cross-module)
 
 **Implementation Note**: After completing this phase and all automated verification passes, pause here for manual confirmation that the OpenWebUI integration works correctly before proceeding.
 
