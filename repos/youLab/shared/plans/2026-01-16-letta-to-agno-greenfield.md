@@ -190,33 +190,31 @@ Agno agents are stateless (created per-request). State lives in:
 - **Git** - Memory blocks, pending diffs
 - **Session state** - Per-request context passed to tools
 
-### 4. Module-Scoped Honcho Sessions
+### 4. Module-Scoped Honcho Sessions (Model-Derived)
 
-Honcho sessions are scoped hierarchically for better dialectic queries:
+Modules are exposed as "models" in OpenWebUI. When user selects a model like `youlab/college-essay/01-first-impression`:
+- `course_id` = `college-essay`
+- `module_id` = `01-first-impression`
+
+**Multiple threads can share the same module** - all threads for the same model share one Honcho session.
 
 ```python
-def get_honcho_session_key(user_id, course_id, module_id, chat_id) -> str:
+def get_honcho_session_key(user_id, course_id, module_id) -> str:
     if module_id and course_id:
-        # Full curriculum course - module-specific insights
+        # Module-specific insights (multiple threads share this)
         return f"module_{user_id}_{course_id}_{module_id}"
     elif course_id:
-        # Course without modules - course-wide insights
+        # Course without modules
         return f"course_{user_id}_{course_id}"
-    elif chat_id:
-        # No course context - thread-specific (legacy)
-        return f"chat_{chat_id}"
     else:
         return f"user_{user_id}"
 ```
 
-**At message persist time**:
-- Read `module_id` from journey block (current curriculum position)
-- Include `module_id` in message metadata
-- Use hierarchical session key
+**Key simplification**: `module_id` comes from model selection in OpenWebUI, NOT from parsing journey blocks. The pipe extracts it from the model name.
 
-**Benefit**: `query_honcho` returns module-specific insights ("in this module, the student has struggled with...")
+**Benefit**: `query_honcho` returns module-specific insights across all threads for that module.
 
-**No journey block?** Falls back to course-scoped or chat-scoped sessions. Modules are optional.
+**Moving to next module**: User selects new module "model" in OpenWebUI → new threads use new Honcho session.
 
 ### 5. In-Process Tools
 
@@ -776,7 +774,7 @@ async def chat_stream(request: StreamChatRequest):
 
     OpenWebUI thread history is passed through directly.
     Memory blocks are loaded from git and injected into system prompt.
-    Honcho persistence uses module-scoped sessions.
+    Honcho persistence uses module-scoped sessions (derived from model selection).
     """
     from youlab_server.agents.agno import create_agent
     from youlab_server.curriculum import get_curriculum_loader
@@ -786,21 +784,18 @@ async def chat_stream(request: StreamChatRequest):
 
     user_id = request.user_id
     chat_id = request.chat_id
-    course_id = request.course_id or "college-essay"
+    course_id = request.course_id  # From model name, e.g., "college-essay"
+    module_id = request.module_id  # From model name, e.g., "01-first-impression"
     messages = request.messages  # Full thread from OpenWebUI
 
     # Load memory blocks from git storage
     memory_blocks = {}
-    module_id = None  # For Honcho session scoping
     storage_manager = get_storage_manager()
     user_storage = storage_manager.get(user_id)
     if user_storage:
         manager = UserBlockManager(user_id, user_storage)
         for label in manager.list_blocks():
             memory_blocks[label] = manager.get_block_body(label)
-        # Extract module_id from journey block for Honcho session scoping
-        if "journey" in memory_blocks:
-            module_id = _parse_module_id(memory_blocks["journey"])
 
     # Get system prompt from course config
     loader = get_curriculum_loader()
@@ -866,14 +861,6 @@ async def chat_stream(request: StreamChatRequest):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
-
-
-def _parse_module_id(journey_content: str) -> str | None:
-    """Extract module_id from journey block content."""
-    for line in journey_content.split("\n"):
-        if line.strip().startswith("module_id:"):
-            return line.split(":", 1)[1].strip()
-    return None
 ```
 
 #### 2. Add Module-Scoped Session Key Helper
@@ -885,22 +872,18 @@ def get_honcho_session_key(
     user_id: str,
     course_id: str | None,
     module_id: str | None,
-    chat_id: str | None,
 ) -> str:
-    """Get hierarchical Honcho session key.
+    """Get module-scoped Honcho session key.
 
-    Priority:
-    1. module_{user}_{course}_{module} - Full curriculum course
-    2. course_{user}_{course} - Course without modules
-    3. chat_{chat_id} - No course context (legacy)
-    4. user_{user_id} - Last resort
+    module_id and course_id come from model selection in OpenWebUI,
+    NOT from journey block parsing.
+
+    Multiple threads with same model share the same session.
     """
     if module_id and course_id:
         return f"module_{user_id}_{course_id}_{module_id}"
     elif course_id:
         return f"course_{user_id}_{course_id}"
-    elif chat_id:
-        return f"chat_{chat_id}"
     else:
         return f"user_{user_id}"
 ```
@@ -975,24 +958,43 @@ class Pipe:
         user_id = __user__.get("id", "anonymous") if __user__ else "anonymous"
         chat_id = body.get("chat_id")
 
-        # Determine course from model name (e.g., "youlab/college-essay")
+        # Parse course_id and module_id from model name
+        # Format: "youlab/college-essay/01-first-impression"
         model = body.get("model", "")
-        course_id = model.split("/")[-1] if "/" in model else "college-essay"
+        course_id, module_id = self._parse_model_name(model)
 
         # Stream from YouLab server
         return self._stream_chat(
             user_id=user_id,
             chat_id=chat_id,
             course_id=course_id,
+            module_id=module_id,
             messages=messages,
             event_emitter=__event_emitter__,
         )
+
+    def _parse_model_name(self, model: str) -> tuple[str | None, str | None]:
+        """Parse course_id and module_id from model name.
+
+        Model format: "youlab/{course_id}/{module_id}"
+        Examples:
+            "youlab/college-essay/01-first-impression" -> ("college-essay", "01-first-impression")
+            "youlab/college-essay" -> ("college-essay", None)
+            "other-model" -> (None, None)
+        """
+        parts = model.split("/")
+        if len(parts) >= 3 and parts[0] == "youlab":
+            return parts[1], parts[2]
+        elif len(parts) >= 2 and parts[0] == "youlab":
+            return parts[1], None
+        return None, None
 
     def _stream_chat(
         self,
         user_id: str,
         chat_id: str | None,
-        course_id: str,
+        course_id: str | None,
+        module_id: str | None,
         messages: list,
         event_emitter,
     ) -> Iterator[str]:
@@ -1005,6 +1007,7 @@ class Pipe:
                 "user_id": user_id,
                 "chat_id": chat_id,
                 "course_id": course_id,
+                "module_id": module_id,  # For module-scoped Honcho sessions
                 "messages": messages,  # Full thread history
             },
             timeout=120.0,
@@ -1074,19 +1077,20 @@ async def lifespan(app: FastAPI):
 #### Automated Verification:
 - [ ] `make check-agent` passes
 - [ ] Server starts without Letta: `uv run youlab-server` (should not require Letta server)
-- [ ] `/chat/stream` endpoint responds: `curl -X POST localhost:8100/chat/stream -H "Content-Type: application/json" -d '{"user_id": "test", "message": "hello"}'`
-- [ ] `get_honcho_session_key()` returns correct keys for each scenario:
+- [ ] `/chat/stream` endpoint responds: `curl -X POST localhost:8100/chat/stream -H "Content-Type: application/json" -d '{"user_id": "test", "course_id": "college-essay", "module_id": "01-first-impression", "messages": [{"role": "user", "content": "hello"}]}'`
+- [ ] `get_honcho_session_key()` returns correct keys:
   - With module_id + course_id → `module_{user}_{course}_{module}`
   - With course_id only → `course_{user}_{course}`
-  - With chat_id only → `chat_{chat_id}`
+- [ ] `_parse_model_name()` correctly extracts course_id and module_id from model names
 
 #### Manual Verification:
 - [ ] Stream a message through OpenWebUI with the new pipe
 - [ ] Verify response streams correctly
 - [ ] Verify messages are persisted to Honcho with module-scoped session
+- [ ] Verify multiple threads for same module share Honcho session
 - [ ] Verify memory blocks are included in agent context
 - [ ] Verify tool calls appear as status updates in UI
-- [ ] Verify `query_honcho` returns module-specific insights (not cross-module)
+- [ ] Verify `query_honcho` returns insights from all threads for that module
 
 **Implementation Note**: After completing this phase and all automated verification passes, pause here for manual confirmation that the OpenWebUI integration works correctly before proceeding.
 
