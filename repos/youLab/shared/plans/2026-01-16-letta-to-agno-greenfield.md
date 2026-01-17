@@ -61,18 +61,15 @@ Replace Letta with Agno via greenfield rebuild, eliminating ~20% of the codebase
 ```
 OpenWebUI (UI, threads, memory UI, module view)
     │
-    ▼ Pipe receives full thread
+    ▼ Pipe receives full thread (USE AS-IS)
     │
 YouLab Pipe (pipelines/agno_pipe.py)
-    │ ✗ DISCARD thread history from OpenWebUI
-    │ ✓ Extract ONLY latest user message
+    │ ✓ Forward thread messages to server
+    │ ✓ Extract user_id, chat_id, course_id
     │
     ▼ POST /chat/stream
     │
 YouLab Server (server/main.py)
-    │
-    ├─► Honcho: get_context(tokens=N, summary=True)
-    │   Returns: messages + summary + peer_representation
     │
     ├─► Git Storage: get memory blocks
     │   Returns: student profile, journey, etc.
@@ -81,12 +78,15 @@ YouLab Server (server/main.py)
     │   - Model: Claude (configurable)
     │   - Tools: [edit_memory_block, query_honcho, advance_lesson]
     │   - Session state: {user_id, chat_id, course_id, honcho_client, ...}
-    │   - Context: Honcho messages + memory blocks
+    │   - System prompt: course config + memory blocks
+    │   - Messages: from OpenWebUI (thread history)
     │
     ├─► Stream response via Agno
     │
-    └─► Fire-and-forget persist to Honcho
+    └─► Fire-and-forget persist to Honcho (for dialectic queries)
 ```
+
+**Note on thread management:** OpenWebUI handles thread/context natively. Long thread summarization is a future optimization - not needed for MVP.
 
 ### New Module Structure (~500 lines total)
 
@@ -139,14 +139,13 @@ Every phase must answer:
 
 **Mistake to avoid:** Building backend in isolation, then struggling to integrate.
 
-### 2. Discard and Replace Context
+### 2. Use OpenWebUI's Native Thread Management
 
-OpenWebUI sends full thread history. We:
-1. **Discard it** - Don't use OpenWebUI's message array
-2. **Extract latest** - Only the current user message
-3. **Replace with Honcho** - `get_context(tokens=N, summary=True)`
-
-This prevents duplicate context and lets Honcho handle summarization.
+OpenWebUI sends full thread history. We use it as-is:
+- Pass messages directly to Agno agent
+- Memory blocks injected into system prompt
+- Honcho persists messages for dialectic queries (fire-and-forget)
+- Long thread summarization is a future optimization
 
 ### 3. Stateless Agents, Stateful Context
 
@@ -490,168 +489,7 @@ __all__ = [
 
 ---
 
-## Phase 2: Honcho Context Integration
-
-### Overview
-
-Add `get_context()` to HonchoClient and establish the pattern of discarding OpenWebUI thread history in favor of Honcho-managed context.
-
-### Changes Required
-
-#### 1. Add get_context to HonchoClient
-
-**File**: `src/youlab_server/honcho/client.py`
-
-Add method after `query_dialectic()`:
-
-```python
-async def get_context(
-    self,
-    user_id: str,
-    chat_id: str,
-    tokens: int = 2000,
-    summary: bool = True,
-) -> "ContextResult | None":
-    """Get conversation context with automatic summarization.
-
-    Args:
-        user_id: The user/student ID
-        chat_id: The chat/thread ID
-        tokens: Maximum tokens for context (older messages summarized)
-        summary: Whether to include summary of older messages
-
-    Returns:
-        ContextResult with messages, summary, and peer representation,
-        or None if unavailable.
-    """
-    if self.client is None:
-        return None
-
-    try:
-        student_peer = self.client.peer(self._get_student_peer_id(user_id))
-        session = self.client.session(self._get_session_id(chat_id))
-
-        context = session.get_context(
-            tokens=tokens,
-            summary=summary,
-            peer_target=self._get_student_peer_id(user_id),
-            peer_perspective=self._tutor_peer_id,
-        )
-
-        return ContextResult(
-            messages=context.messages,
-            summary=context.summary,
-            peer_representation=context.peer_representation,
-        )
-    except Exception as e:
-        logger.warning(f"Failed to get context for {user_id}/{chat_id}: {e}")
-        return None
-
-
-@dataclass
-class ContextResult:
-    """Result from Honcho get_context call."""
-    messages: list  # Honcho message objects
-    summary: str | None  # Summary of older messages
-    peer_representation: str | None  # Theory-of-mind insights
-
-    def to_message_list(self) -> list[dict]:
-        """Convert to simple message list for agent context."""
-        result = []
-
-        if self.summary:
-            result.append({
-                "role": "system",
-                "content": f"[Conversation Summary]\n{self.summary}"
-            })
-
-        if self.peer_representation:
-            result.append({
-                "role": "system",
-                "content": f"[Student Insights]\n{self.peer_representation}"
-            })
-
-        for msg in self.messages:
-            role = "user" if "student" in msg.peer_id else "assistant"
-            result.append({"role": role, "content": msg.content})
-
-        return result
-```
-
-#### 2. Create Context Loading Helper
-
-**File**: `src/youlab_server/agents/context.py` (new)
-
-```python
-"""Context loading for Agno agents."""
-
-from youlab_server.honcho.client import HonchoClient
-from youlab_server.storage import get_storage_manager
-from youlab_server.storage.blocks import UserBlockManager
-
-
-async def load_agent_context(
-    user_id: str,
-    chat_id: str,
-    course_id: str,
-    honcho_client: HonchoClient | None,
-    context_tokens: int = 2000,
-) -> dict:
-    """Load all context needed for an agent request.
-
-    Args:
-        user_id: The user/student ID
-        chat_id: The chat/thread ID
-        course_id: The course ID
-        honcho_client: Honcho client (optional)
-        context_tokens: Max tokens for conversation context
-
-    Returns:
-        Dict with conversation_context and memory_blocks
-    """
-    # Load conversation context from Honcho
-    conversation_context = []
-    if honcho_client:
-        ctx_result = await honcho_client.get_context(
-            user_id=user_id,
-            chat_id=chat_id,
-            tokens=context_tokens,
-            summary=True,
-        )
-        if ctx_result:
-            conversation_context = ctx_result.to_message_list()
-
-    # Load memory blocks from git storage
-    memory_blocks = {}
-    storage_manager = get_storage_manager()
-    user_storage = storage_manager.get(user_id)
-
-    if user_storage:
-        manager = UserBlockManager(user_id, user_storage)
-        for label in manager.list_blocks():
-            memory_blocks[label] = manager.get_block_body(label)
-
-    return {
-        "conversation_context": conversation_context,
-        "memory_blocks": memory_blocks,
-    }
-```
-
-### Success Criteria
-
-#### Automated Verification:
-- [ ] `make check-agent` passes
-- [ ] `get_context` method exists: `python -c "from youlab_server.honcho.client import HonchoClient; assert hasattr(HonchoClient, 'get_context')"`
-- [ ] Context loader imports: `python -c "from youlab_server.agents.context import load_agent_context"`
-
-#### Manual Verification:
-- [ ] Test `get_context()` against Honcho demo server with existing conversation
-- [ ] Verify summary is returned for conversations exceeding token limit
-- [ ] Verify `to_message_list()` produces valid message format
-
----
-
-## Phase 3: Remove Letta Sync from Storage
+## Phase 2: Remove Letta Sync from Storage
 
 ### Overview
 
@@ -744,11 +582,11 @@ UserBlockManager(user_id, user_storage)
 
 ---
 
-## Phase 4: Streaming Pipeline
+## Phase 3: Streaming Pipeline
 
 ### Overview
 
-Replace the three-layer Letta streaming with a single Agno streaming layer. Update the OpenWebUI pipe to discard thread history and use Honcho context.
+Replace the three-layer Letta streaming with a single Agno streaming layer. OpenWebUI thread history is used as-is.
 
 ### Changes Required
 
@@ -763,56 +601,58 @@ Replace the existing `/chat/stream` endpoint:
 async def chat_stream(request: StreamChatRequest):
     """Stream chat response using Agno agent.
 
-    NOTE: We DISCARD the messages array from OpenWebUI.
-    Context comes from Honcho get_context() instead.
+    OpenWebUI thread history is passed through directly.
+    Memory blocks are loaded from git and injected into system prompt.
     """
     from youlab_server.agents.agno import create_agent
-    from youlab_server.agents.context import load_agent_context
     from youlab_server.curriculum import get_curriculum_loader
+    from youlab_server.storage import get_storage_manager
+    from youlab_server.storage.blocks import UserBlockManager
 
     user_id = request.user_id
     chat_id = request.chat_id
     course_id = request.course_id or "college-essay"
+    messages = request.messages  # Full thread from OpenWebUI
 
-    # Extract ONLY the latest user message
-    # Discard the rest - Honcho manages context
-    user_message = request.message
-
-    # Load context from Honcho + memory blocks from git
-    context = await load_agent_context(
-        user_id=user_id,
-        chat_id=chat_id,
-        course_id=course_id,
-        honcho_client=app.state.honcho_client,
-    )
+    # Load memory blocks from git storage
+    memory_blocks = {}
+    storage_manager = get_storage_manager()
+    user_storage = storage_manager.get(user_id)
+    if user_storage:
+        manager = UserBlockManager(user_id, user_storage)
+        for label in manager.list_blocks():
+            memory_blocks[label] = manager.get_block_body(label)
 
     # Get system prompt from course config
     loader = get_curriculum_loader()
     course = loader.get_course(course_id)
     system_prompt = course.agent.system_prompt if course else ""
 
-    # Create agent with context
+    # Create agent with memory blocks in system prompt
     agent = create_agent(
         user_id=user_id,
         chat_id=chat_id,
         course_id=course_id,
         honcho_client=app.state.honcho_client,
-        memory_blocks=context["memory_blocks"],
+        memory_blocks=memory_blocks,
         system_prompt=system_prompt,
     )
 
-    # Fire-and-forget: persist user message to Honcho
-    if app.state.honcho_client and chat_id:
-        create_persist_task(
-            app.state.honcho_client,
-            user_id, chat_id, user_message,
-            is_user=True,
-        )
+    # Fire-and-forget: persist latest user message to Honcho
+    if app.state.honcho_client and chat_id and messages:
+        latest_user_msg = messages[-1].get("content", "") if messages[-1].get("role") == "user" else ""
+        if latest_user_msg:
+            create_persist_task(
+                app.state.honcho_client,
+                user_id, chat_id, latest_user_msg,
+                is_user=True,
+            )
 
     async def stream_response():
         full_response = []
 
-        async for chunk in agent.arun_response_stream(user_message):
+        # Pass full message history to Agno
+        async for chunk in agent.arun_response_stream(messages):
             # Convert to SSE format
             if chunk.content:
                 full_response.append(chunk.content)
@@ -847,15 +687,13 @@ async def chat_stream(request: StreamChatRequest):
 ```python
 """OpenWebUI Pipe for YouLab using Agno agents.
 
-This pipe:
-1. DISCARDS the message history from OpenWebUI
-2. Extracts ONLY the latest user message
-3. Delegates to YouLab server which uses Honcho for context
+This pipe forwards the full message history from OpenWebUI to the YouLab server.
+Memory blocks are injected server-side into the system prompt.
 """
 
 import json
 import httpx
-from typing import Iterator, List, Union
+from typing import Iterator, Union
 from pydantic import BaseModel, Field
 
 
@@ -866,10 +704,6 @@ class Pipe:
         youlab_server_url: str = Field(
             default="http://localhost:8100",
             description="YouLab server URL"
-        )
-        context_tokens: int = Field(
-            default=2000,
-            description="Max tokens for conversation context"
         )
 
     def __init__(self):
@@ -883,16 +717,12 @@ class Pipe:
     ) -> Union[str, Iterator[str]]:
         """Process chat request.
 
-        IMPORTANT: We ignore body["messages"] history.
-        Only the latest user message is used.
-        Honcho manages conversation context.
+        Forwards full message history to YouLab server.
+        Server handles memory block injection and Honcho persistence.
         """
-        # Extract latest user message only
         messages = body.get("messages", [])
         if not messages:
             return "No message provided"
-
-        latest_message = messages[-1].get("content", "")
 
         # Get user info
         user_id = __user__.get("id", "anonymous") if __user__ else "anonymous"
@@ -907,7 +737,7 @@ class Pipe:
             user_id=user_id,
             chat_id=chat_id,
             course_id=course_id,
-            message=latest_message,
+            messages=messages,
             event_emitter=__event_emitter__,
         )
 
@@ -916,7 +746,7 @@ class Pipe:
         user_id: str,
         chat_id: str | None,
         course_id: str,
-        message: str,
+        messages: list,
         event_emitter,
     ) -> Iterator[str]:
         """Stream chat response from YouLab server."""
@@ -928,7 +758,7 @@ class Pipe:
                 "user_id": user_id,
                 "chat_id": chat_id,
                 "course_id": course_id,
-                "message": message,
+                "messages": messages,  # Full thread history
             },
             timeout=120.0,
         ) as response:
@@ -1010,7 +840,7 @@ async def lifespan(app: FastAPI):
 
 ---
 
-## Phase 5: Module Sync
+## Phase 4: Module Sync
 
 ### Overview
 
@@ -1115,7 +945,7 @@ async def sync_modules(
 
 ---
 
-## Phase 6: Background Agents
+## Phase 5: Background Agents
 
 ### Overview
 
@@ -1282,7 +1112,7 @@ async def run_background_task(
 
 ---
 
-## Phase 7: Cleanup
+## Phase 6: Cleanup
 
 ### Overview
 
