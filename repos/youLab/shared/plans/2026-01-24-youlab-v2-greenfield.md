@@ -14,9 +14,10 @@ These principles guide all architectural decisions:
 
 1. **User Data Ownership**: Users own their context. Not as a moat, but as their property.
 2. **Portability**: Users can export, self-host, or migrate their data.
-3. **Open Source Friendly**: Architecture should work for self-hosted deployments.
+3. **Open Source**: Architecture should work for self-hosted deployments.
 4. **Local-First Capable**: Can run entirely locally (future, not MVP).
-5. **Proactive AI**: Background agents that work for users even when they're not chatting.
+5. **Proactive Context**: Background agents work for users even when they're not chatting to diff and pr their memory blocks.
+Users have complete control over their triggers, prompts, memory blocks, permissions.
 
 ---
 
@@ -65,7 +66,7 @@ These principles guide all architectural decisions:
 |-----------|-------|-----------|
 | Memory blocks | Dolt | Version controlled, diffable, user-editable |
 | Pending diffs | Dolt | Tied to block approval workflow |
-| User preferences | Dolt | User-controlled settings |
+| User preferences | Dolt | Stored as memory blocks; user-controlled settings |
 | Notes/artifacts | Dolt | User-created content (future) |
 | **Messages** | **Honcho** | Append-only, needs dialectic/theory-of-mind |
 | **Sessions** | **Honcho** | Conversation structure for dialectic |
@@ -109,7 +110,7 @@ Replaces Git-backed storage with MySQL-compatible Dolt.
 **Schema**: TBD - will include at minimum:
 - `blocks` table (user_id, label, content, metadata)
 - `pending_diffs` table (approval workflow)
-- Possibly: `preferences`, task queue tables
+- Possibly, task queue tables
 
 **Storage class interface**: TBD - likely similar to existing `GitUserStorage` interface.
 
