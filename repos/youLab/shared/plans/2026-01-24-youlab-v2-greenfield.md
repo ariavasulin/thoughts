@@ -21,6 +21,80 @@ Users have complete control over their triggers, prompts, memory blocks, permiss
 
 ---
 
+## Core Concepts
+
+### Agent as Primitive
+
+The top-level organizational unit is the **Agent**, not Course. Each Agent:
+- Gets its own pipe/function (base model in OpenWebUI)
+- May have zero or more **Modules**
+- Defines shared blocks and tools available to all its modules
+
+### Modules
+
+Modules are scoped to Agents and represent structured learning paths or workflows:
+- Each Module becomes an OpenWebUI "model" derived from the Agent's pipe
+- Model naming: `youlab/{agent-id}/{module-id}`
+- Modules define their own blocks (by convention) which can reference agent-level blocks
+
+### Thread Semantics
+
+All Honcho sessions use consistent naming: `{user}_{agent}_{chat_id}` (matches OpenWebUI's native structure).
+
+| Chat Type | Module Mapping | Persistence | User Can Create? |
+|-----------|----------------|-------------|------------------|
+| **Module chat** | `module_id ↔ chat_id` in Dolt | 1 chat per module | No (defined by config) |
+| **Ephemeral chat** | None | New chat each time | Yes (via "New Chat") |
+
+- **Module chats**: One persistent chat per module. Dolt stores the `module_id → chat_id` mapping. Optional "clear" creates new chat_id for that module.
+- **Ephemeral chats**: Temporary chats that map to the Agent directly, not a module. Still persisted to Honcho.
+- **Users cannot create new modules** - modules are defined in agent configuration.
+
+### Block System
+
+Blocks are the unit of structured memory. Key design decisions:
+
+**Global Namespace by Name**
+- Block identity is determined by **name**, not path
+- Same block name across configs = same block (shared)
+- Enables cross-agent and cross-module block sharing
+
+**Schema Validation**
+- Each block has a schema (defined in TOML)
+- If two configs define the same block name with **conflicting schemas** → compile-time error
+- Non-conflicting definitions are merged (inheritance)
+
+**Definition & Reference**
+- Blocks can be **defined** (with schema) or **referenced** (by name only)
+- Can appear in `agent.toml` or `module.toml`
+- **Convention**: Define block schemas in `module.toml`
+- Agent-level blocks are inherited by all modules
+
+### Configuration Structure
+
+```
+config/agents/
+  {agent-id}/
+    agent.toml              # Agent definition (pipe, shared blocks, tools)
+    modules/
+      {module-id}.toml      # Module definition (blocks, prompts, curriculum)
+```
+
+**agent.toml** - Agent-level configuration:
+- Agent metadata (id, name, description)
+- Pipe/function definition
+- Shared blocks (inherited by all modules)
+- Available tools
+- Background agent triggers
+
+**module.toml** - Module-level configuration:
+- Module metadata
+- Block definitions (by convention, schemas live here)
+- System prompt / persona
+- Curriculum steps (if applicable)
+
+---
+
 ## Agreed Architecture
 
 ### High-Level View
@@ -28,9 +102,18 @@ Users have complete control over their triggers, prompts, memory blocks, permiss
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                        OpenWebUI                                │
-│                  (Frontend + Thread UI)                         │
+│                                                                 │
+│   Agents (base models)     Modules (derived models)            │
+│   ┌──────────────────┐     ┌──────────────────┐                │
+│   │ youlab/essay     │ ──▶ │ youlab/essay/... │                │
+│   │ youlab/tutor     │     │ youlab/tutor/... │                │
+│   └──────────────────┘     └──────────────────┘                │
+│                                                                 │
+│   Thread per module (persistent) │ New chat (ephemeral)        │
 └──────────────────────────┬──────────────────────────────────────┘
                            │
+                           │ Pipe ↕ (chat messages + streaming responses)
+                           │ API  ↑ (mgmt: chat CRUD, finalization)
                            ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                      YouLab Service                             │
@@ -57,7 +140,7 @@ Users have complete control over their triggers, prompts, memory blocks, permiss
   └───────────┘     └───────────┘     └───────────┘
 
   Knowledge         Conversation        LLM
-  Layer             Layer               Inference
+  + API Keys        Layer               Inference
 ```
 
 ### Data Separation (Agreed)
@@ -68,6 +151,8 @@ Users have complete control over their triggers, prompts, memory blocks, permiss
 | Pending diffs | Dolt | Tied to block approval workflow |
 | User preferences | Dolt | Stored as memory blocks; user-controlled settings |
 | Notes/artifacts | Dolt | User-created content (future) |
+| Module → chat_id mapping | Dolt | Links modules to OpenWebUI chat IDs |
+| OpenWebUI API keys | Dolt | Auto-injected for API calls (user doesn't manage) |
 | **Messages** | **Honcho** | Append-only, needs dialectic/theory-of-mind |
 | **Sessions** | **Honcho** | Conversation structure for dialectic |
 
@@ -110,6 +195,8 @@ Replaces Git-backed storage with MySQL-compatible Dolt.
 **Schema**: TBD - will include at minimum:
 - `blocks` table (user_id, label, content, metadata)
 - `pending_diffs` table (approval workflow)
+- `module_chats` table (user_id, agent_id, module_id, owui_chat_id)
+- `user_api_keys` table (user_id, owui_api_key, created_at)
 - Possibly, task queue tables
 
 **Storage class interface**: TBD - likely similar to existing `GitUserStorage` interface.
@@ -158,16 +245,41 @@ Stateless agents created per-request.
 - Simple in-memory scheduler
 - External queue (Redis, etc.)
 
-### 6. OpenWebUI Pipe
+### 6. OpenWebUI Integration
 
-Connects OpenWebUI frontend to YouLab service.
+YouLab uses **Pipes for chat flow** and **API for management operations**.
 
-**Responsibilities**:
-- Extract user_id, course_id, module_id from model name
-- Forward messages to `/chat/stream`
-- Handle SSE streaming back to UI
+#### Pipe (Chat Flow)
 
-**Status**: Architecture agreed. Details TBD.
+The Pipe is the primary chat channel - handles all message streaming:
+- Receives user messages from OpenWebUI
+- Extracts user_id, agent_id, module_id from model name (e.g., `youlab/essay/brainstorm`)
+- Routes to YouLab agent for processing
+- **Streams responses back to user** via SSE (standard pipe behavior)
+
+#### API Client (Management Operations)
+
+YouLab Service calls OpenWebUI API for non-streaming operations:
+
+| Endpoint | Purpose |
+|----------|---------|
+| `POST /api/chats/new` | Create new chat session (module initialization) |
+| `GET /api/chats/{id}` | Retrieve chat with full history |
+| `POST /api/chats/{id}` | Update chat metadata |
+| `DELETE /api/chats/{id}` | Delete chat session (module clear) |
+| `POST /api/chat/completed` | Finalize completion (triggers title gen, tags, etc.) |
+
+**API Key Management**:
+- User OpenWebUI API keys stored in Dolt (`user_api_keys` table)
+- YouLab auto-injects `Authorization: Bearer <key>` on all API calls
+- Users don't manually manage API keys - auto-provisioned on first use
+
+#### Model Registration
+
+- Agents register as base models: `youlab/{agent-id}`
+- Modules register as derived models: `youlab/{agent-id}/{module-id}`
+
+**Status**: Architecture agreed. Implementation details TBD.
 
 ---
 
@@ -215,10 +327,15 @@ Future option to run entirely locally:
 ## Migration from Current System
 
 ### What Stays
-- Course TOML configuration (`config/courses/`)
+- TOML configuration pattern (migrated to `config/agents/`)
 - Curriculum schema system
 - OpenWebUI frontend (with pipe updates)
 - Honcho integration patterns
+
+### What Changes
+- `config/courses/` → `config/agents/` (Course → Agent renaming)
+- `course.toml` → `agent.toml` + `modules/*.toml`
+- Block naming becomes global (same name = same block across agents)
 
 ### What Gets Deleted
 - `server/agents.py` (Letta AgentManager)
@@ -252,7 +369,7 @@ These need explicit decisions before implementation:
 
 5. **Approval workflow**: Keep current PendingDiff flow or simplify?
 
-6. **Module-scoped Honcho sessions**: Keep this pattern from greenfield plan?
+6. ~~**Module-scoped Honcho sessions**~~: **RESOLVED** - Sessions use `{user}_{agent}_{chat_id}` uniformly. Module → chat_id mapping stored in Dolt.
 
 7. **Error handling**: Retry strategies, failure modes?
 
