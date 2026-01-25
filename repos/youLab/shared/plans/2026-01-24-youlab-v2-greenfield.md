@@ -103,13 +103,13 @@ config/agents/
 ┌─────────────────────────────────────────────────────────────────┐
 │                        OpenWebUI                                │
 │                                                                 │
-│   Agents (base models)     Modules (derived models)            │
-│   ┌──────────────────┐     ┌──────────────────┐                │
-│   │ youlab/essay     │ ──▶ │ youlab/essay/... │                │
-│   │ youlab/tutor     │     │ youlab/tutor/... │                │
-│   └──────────────────┘     └──────────────────┘                │
+│   Agents (base models)     Modules (derived models)             │
+│   ┌──────────────────┐     ┌──────────────────┐                 │
+│   │ youlab/essay     │ ──▶ │ youlab/essay/... │                 │
+│   │ youlab/tutor     │     │ youlab/tutor/... │                 │
+│   └──────────────────┘     └──────────────────┘                 │
 │                                                                 │
-│   Thread per module (persistent) │ New chat (ephemeral)        │
+│   Thread per module (persistent) │ New chat (ephemeral)         │
 └──────────────────────────┬──────────────────────────────────────┘
                            │
                            │ Pipe ↕ (chat messages + streaming responses)
