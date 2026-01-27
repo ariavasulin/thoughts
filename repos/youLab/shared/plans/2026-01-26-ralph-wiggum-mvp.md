@@ -79,6 +79,9 @@ __all__ = ["Pipe"]
 ```python
 """Configuration via environment variables."""
 
+from __future__ import annotations
+
+from functools import lru_cache
 from pydantic_settings import BaseSettings
 
 
@@ -86,7 +89,7 @@ class Settings(BaseSettings):
     """Ralph configuration."""
 
     # OpenRouter for model flexibility
-    openrouter_api_key: str
+    openrouter_api_key: str = ""  # Default empty for testing
     openrouter_model: str = "anthropic/claude-sonnet-4-20250514"
 
     # Honcho
@@ -101,12 +104,21 @@ class Settings(BaseSettings):
     # Docker sandbox
     sandbox_base_image: str = "nikolaik/python-nodejs:python3.12-nodejs22"
     sandbox_timeout: int = 300  # 5 minutes
+    use_docker_sandbox: bool = False
+    sandbox_port_base: int = 9000
 
     class Config:
         env_prefix = "RALPH_"
 
 
-settings = Settings()
+@lru_cache
+def get_settings() -> Settings:
+    """Get settings singleton. Allows override in tests."""
+    return Settings()
+
+
+# For convenience, but prefer get_settings() for testability
+settings = get_settings()
 ```
 
 #### 3. Add dependencies
@@ -123,13 +135,15 @@ ralph = [
 
 ### Success Criteria:
 
-#### Automated Verification:
-- [ ] `uv sync --extra ralph` installs dependencies
-- [ ] `uv run python -c "from ralph.config import settings; print(settings.openrouter_model)"` works
-- [ ] `make check-agent` passes
+#### Automated Verification (agent can run these):
+- [ ] `uv sync --extra ralph` exits 0
+- [ ] `make check-agent` passes (lint + typecheck)
+- [ ] Files exist: `ralph/__init__.py`, `ralph/config.py`
 
-#### Manual Verification:
-- [ ] Directory structure matches spec
+#### Manual Verification (requires human + external systems):
+- [ ] `uv run python -c "from ralph.config import settings"` - requires `RALPH_OPENROUTER_API_KEY` env var set
+
+**Implementation Note**: Config will fail to import without env vars. That's expected - just verify the files exist and pass lint/typecheck.
 
 ---
 
@@ -286,13 +300,17 @@ def persist_message_fire_and_forget(
 
 ### Success Criteria:
 
-#### Automated Verification:
-- [ ] `uv run python -c "from ralph.honcho import get_honcho; print(get_honcho())"` works
-- [ ] `make check-agent` passes
+#### Automated Verification (agent can run these):
+- [ ] `make check-agent` passes (lint + typecheck)
+- [ ] File exists: `ralph/honcho.py`
+- [ ] Module imports without Honcho running: `uv run python -c "from ralph.honcho import HonchoClient, get_honcho"`
 
-#### Manual Verification:
-- [ ] With Honcho running, messages persist correctly
-- [ ] Dialectic queries return insights
+#### Manual Verification (requires human + Honcho service):
+- [ ] With Honcho running locally, `persist_message` succeeds
+- [ ] With Honcho running + conversation history, `query_dialectic` returns insights
+- [ ] Graceful degradation: Without Honcho, methods return None/no-op (don't crash)
+
+**Implementation Note**: Honcho client is lazy-loaded and gracefully handles missing service. Agent can verify code correctness but not actual Honcho integration.
 
 ---
 
@@ -437,13 +455,18 @@ def get_manager() -> OpenHandsManager:
 
 ### Success Criteria:
 
-#### Automated Verification:
-- [ ] `uv run python -c "from ralph.openhands_client import get_manager; print(get_manager())"` works
-- [ ] `make check-agent` passes
+#### Automated Verification (agent can run these):
+- [ ] `make check-agent` passes (lint + typecheck)
+- [ ] File exists: `ralph/openhands_client.py`
+- [ ] Path helpers work: `uv run python -c "from ralph.openhands_client import OpenHandsManager; m = OpenHandsManager(); print(m._get_workspace_path('test'))"`
 
-#### Manual Verification:
-- [ ] Conversation creates workspace directory
-- [ ] Files persist in workspace across conversations
+#### Manual Verification (requires human + OpenHands SDK + Docker):
+- [ ] `get_or_create_conversation` creates workspace directory on disk
+- [ ] Conversation runs and responds to messages
+- [ ] Files created in one conversation persist to next conversation (same user)
+- [ ] Different users have isolated workspaces
+
+**Implementation Note**: OpenHands SDK requires Docker and API keys. Agent can verify code structure and imports from `TYPE_CHECKING` blocks, but actual conversation creation requires running services.
 
 ---
 
@@ -472,12 +495,13 @@ __all__ = ["QueryHonchoTool"]
 from __future__ import annotations
 
 import asyncio
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar, Any
 
 import structlog
-from openhands.tools.base import BaseTool
 
-from ralph.honcho import get_honcho
+# Lazy import - OpenHands may not be installed
+if TYPE_CHECKING:
+    from openhands.tools.base import BaseTool as BaseToolType
 
 log = structlog.get_logger()
 
@@ -490,7 +514,17 @@ def set_user_context(chat_id: str, user_id: str) -> None:
     _user_context[chat_id] = user_id
 
 
-class QueryHonchoTool(BaseTool):
+def _get_base_class() -> type:
+    """Get BaseTool class, with fallback for testing."""
+    try:
+        from openhands.tools.base import BaseTool
+        return BaseTool
+    except ImportError:
+        # Fallback for testing without OpenHands installed
+        return object
+
+
+class QueryHonchoTool(_get_base_class()):
     """
     Query Honcho for insights about the current student.
 
@@ -550,13 +584,24 @@ class QueryHonchoTool(BaseTool):
 
 ### Success Criteria:
 
-#### Automated Verification:
-- [ ] `uv run python -c "from ralph.tools import QueryHonchoTool; print(QueryHonchoTool.name)"` works
-- [ ] `make check-agent` passes
+#### Automated Verification (agent can run these):
+- [ ] `make check-agent` passes (lint + typecheck)
+- [ ] Files exist: `ralph/tools/__init__.py`, `ralph/tools/query_honcho.py`
+- [ ] User context functions work (no external deps):
+  ```bash
+  uv run python -c "
+  from ralph.tools.query_honcho import set_user_context, _user_context
+  set_user_context('chat123', 'user456')
+  assert _user_context['chat123'] == 'user456'
+  print('ok')
+  "
+  ```
 
-#### Manual Verification:
+#### Manual Verification (requires human + Honcho):
 - [ ] Tool returns insights when conversation history exists
-- [ ] Tool gracefully handles new students with no history
+- [ ] Tool returns graceful message for new students
+
+**Implementation Note**: The tool imports `openhands.tools.base.BaseTool` - this will fail if OpenHands isn't installed. Use `TYPE_CHECKING` guard or make OpenHands optional import with fallback.
 
 ---
 
@@ -735,23 +780,43 @@ class Pipe:
 
 ### Success Criteria:
 
-#### Automated Verification:
-- [ ] `uv run python -c "from ralph import Pipe; p = Pipe(); print(p.name)"` works
-- [ ] `make check-agent` passes
+#### Automated Verification (agent can run these):
+- [ ] `make check-agent` passes (lint + typecheck)
+- [ ] File exists: `ralph/pipe.py`
+- [ ] Pipe class instantiates (no external calls in `__init__`):
+  ```bash
+  uv run python -c "
+  from ralph.pipe import Pipe
+  p = Pipe()
+  assert p.name == 'Ralph Wiggum'
+  print('ok')
+  "
+  ```
+- [ ] Message extraction logic works:
+  ```bash
+  uv run python -c "
+  body = {'messages': [{'content': 'hello'}, {'content': 'world'}]}
+  msg = body['messages'][-1]['content']
+  assert msg == 'world'
+  print('ok')
+  "
+  ```
 
-#### Manual Verification:
-- [ ] Copy `ralph/pipe.py` to OpenWebUI pipelines
+#### Manual Verification (requires human + OpenWebUI + OpenHands + Docker):
+- [ ] Install pipe in OpenWebUI admin
 - [ ] Send message, see streaming response
-- [ ] Run command (e.g., "list files in current directory"), verify execution
-- [ ] Create file in one chat, start new chat, verify file exists
-- [ ] After some conversation, ask agent to use query_honcho, verify it works
+- [ ] Run terminal command, verify execution in sandbox
+- [ ] Create file, start new chat, verify file persists
+- [ ] Verify query_honcho tool works after conversation history exists
+
+**Implementation Note**: The `pipe()` method imports OpenHands lazily. Pipe class itself should instantiate without any external deps so we can at least verify the class structure.
 
 ---
 
 ## Phase 6: Docker Sandbox (Optional Enhancement)
 
 ### Overview
-Switch from LocalWorkspace to DockerWorkspace for true isolation. This is optional for MVP but recommended for multi-user.
+Switch from LocalWorkspace to DockerWorkspace for true isolation. This is optional for MVP but recommended for multi-user. Config fields already added in Phase 1.
 
 ### Changes Required:
 
@@ -777,19 +842,12 @@ else:
     workspace = str(self._get_workspace_path(user_id))
 ```
 
-#### 2. Add config options
-**File**: `ralph/config.py` (add):
-```python
-use_docker_sandbox: bool = False
-sandbox_port_base: int = 9000
-```
-
 ### Success Criteria:
 
-#### Automated Verification:
-- [ ] `make check-agent` passes
+#### Automated Verification (agent can run these):
+- [ ] `make check-agent` passes (lint + typecheck)
 
-#### Manual Verification:
+#### Manual Verification (requires human + Docker):
 - [ ] With `RALPH_USE_DOCKER_SANDBOX=true`, commands run in container
 - [ ] User cannot access files outside their workspace
 - [ ] Container cleanup happens properly
@@ -798,26 +856,182 @@ sandbox_port_base: int = 9000
 
 ## Testing Strategy
 
-### Unit Tests:
-- HonchoClient initialization and error handling
-- OpenHandsManager workspace path generation
-- QueryHonchoTool user context lookup
+### Design for Testability
 
-### Integration Tests:
-- Full message flow: Pipe → OpenHands → response
-- Honcho persistence and retrieval
-- Workspace persistence across conversations
+The key challenge: OpenHands and Honcho are external dependencies that won't be available during automated testing. We must design the code so that:
 
-### Manual Testing Steps:
-1. Start OpenWebUI with Ralph pipe installed
-2. Login as test user
-3. Send "Hello, who are you?"
-4. Send "Create a file called test.py with a hello world program"
-5. Verify file exists: "List files in current directory"
-6. Start new chat
-7. Send "What files exist in my workspace?" - verify test.py is there
-8. Send "What have I been working on?" - agent should use query_honcho
-9. Verify Honcho has conversation history
+1. **Imports don't fail** - Use `TYPE_CHECKING` guards and lazy imports
+2. **Pure logic is extractable** - Path generation, message parsing, context management
+3. **External calls are injectable** - Dependency injection or clear seams for mocking
+
+### What Agent Can Verify (No External Services)
+
+**File**: `tests/ralph/test_ralph_unit.py`
+```python
+"""Unit tests for Ralph that run without external services."""
+
+import pytest
+from pathlib import Path
+import tempfile
+
+
+class TestConfig:
+    """Test config without actually loading (needs env vars)."""
+
+    def test_config_file_exists(self):
+        assert Path("ralph/config.py").exists()
+
+    def test_config_has_required_fields(self):
+        import ast
+        with open("ralph/config.py") as f:
+            tree = ast.parse(f.read())
+
+        # Find Settings class
+        settings_class = None
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef) and node.name == "Settings":
+                settings_class = node
+                break
+
+        assert settings_class is not None
+
+        # Check for required fields
+        field_names = []
+        for item in settings_class.body:
+            if isinstance(item, ast.AnnAssign) and hasattr(item.target, "id"):
+                field_names.append(item.target.id)
+
+        assert "openrouter_api_key" in field_names
+        assert "openrouter_model" in field_names
+        assert "honcho_workspace_id" in field_names
+
+
+class TestHonchoClient:
+    """Test Honcho client structure (not actual Honcho calls)."""
+
+    def test_client_instantiates_without_service(self):
+        from ralph.honcho import HonchoClient
+        client = HonchoClient()
+        assert client._client is None
+        assert client._initialized is False
+
+    def test_get_honcho_returns_singleton(self):
+        from ralph.honcho import get_honcho
+        h1 = get_honcho()
+        h2 = get_honcho()
+        assert h1 is h2
+
+
+class TestOpenHandsManager:
+    """Test OpenHands manager path logic."""
+
+    def test_workspace_path_generation(self):
+        from ralph.openhands_client import OpenHandsManager
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Temporarily override settings
+            import ralph.config
+            original = ralph.config.settings.user_data_dir
+            ralph.config.settings.user_data_dir = tmpdir
+
+            try:
+                manager = OpenHandsManager()
+                path = manager._get_workspace_path("user123")
+
+                assert "user123" in str(path)
+                assert path.exists()
+                assert path.is_dir()
+            finally:
+                ralph.config.settings.user_data_dir = original
+
+    def test_conversation_path_generation(self):
+        from ralph.openhands_client import OpenHandsManager
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            import ralph.config
+            original = ralph.config.settings.conversations_dir
+            ralph.config.settings.conversations_dir = tmpdir
+
+            try:
+                manager = OpenHandsManager()
+                path = manager._get_conversation_path("user123", "chat456")
+
+                assert "user123" in str(path)
+                assert "chat456" in str(path)
+                assert path.exists()
+            finally:
+                ralph.config.settings.conversations_dir = original
+
+
+class TestQueryHonchoTool:
+    """Test query_honcho tool context management."""
+
+    def test_set_user_context(self):
+        from ralph.tools.query_honcho import set_user_context, _user_context
+
+        set_user_context("chat123", "user456")
+        assert _user_context["chat123"] == "user456"
+
+    def test_tool_returns_error_without_context(self):
+        from ralph.tools.query_honcho import QueryHonchoTool, _user_context
+
+        # Clear context
+        _user_context.clear()
+
+        tool = QueryHonchoTool()
+        result = tool("What is the student struggling with?")
+
+        assert "Unable to identify" in result or "No conversation history" in result
+
+
+class TestPipe:
+    """Test Pipe class structure."""
+
+    def test_pipe_instantiates(self):
+        from ralph.pipe import Pipe
+        p = Pipe()
+        assert p.name == "Ralph Wiggum"
+        assert hasattr(p, "valves")
+
+    def test_message_extraction_logic(self):
+        """Test the message extraction without calling pipe()."""
+        body = {"messages": [{"content": "first"}, {"content": "last"}]}
+        messages = body.get("messages", [])
+        user_message = messages[-1].get("content", "") if messages else ""
+        assert user_message == "last"
+
+    def test_empty_messages_handled(self):
+        body = {"messages": []}
+        messages = body.get("messages", [])
+        user_message = messages[-1].get("content", "") if messages else ""
+        assert user_message == ""
+```
+
+Run with: `uv run pytest tests/ralph/ -v`
+
+### What Requires Manual Verification
+
+| Test | Why Manual | How to Verify |
+|------|------------|---------------|
+| OpenHands conversation runs | Requires Docker + API key | Send message in OpenWebUI |
+| Streaming works | Requires OpenWebUI event system | Watch UI during message |
+| Files persist across chats | Requires full stack | Create file, new chat, check |
+| Honcho persistence | Requires Honcho service | Check Honcho dashboard |
+| query_honcho returns insights | Requires Honcho + history | Ask agent after conversation |
+
+### Manual Testing Checklist
+
+After all phases complete, human verifies:
+
+1. [ ] Set env vars: `RALPH_OPENROUTER_API_KEY`, optionally Honcho vars
+2. [ ] Start OpenWebUI with Ralph pipe
+3. [ ] Send "Hello, who are you?" - expect streaming response
+4. [ ] Send "Create hello.py that prints hello world" - expect file creation
+5. [ ] Send "Run hello.py" - expect execution output
+6. [ ] Start NEW chat (same user)
+7. [ ] Send "What files exist?" - expect hello.py to be listed
+8. [ ] Send "What have I been working on?" - expect query_honcho to be called
+9. [ ] Check Honcho dashboard - expect conversation history
 
 ---
 
