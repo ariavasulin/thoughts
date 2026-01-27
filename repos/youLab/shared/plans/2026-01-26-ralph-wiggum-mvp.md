@@ -4,6 +4,24 @@
 
 Build a greenfield "Claude Code-like" experience: OpenWebUI chat → OpenHands sandbox with full streaming. Each user gets a persistent workspace (files survive across chats), each chat is a fresh conversation context. Agent has access to `query_honcho` tool to understand student history.
 
+## How to Use This Plan
+
+**For implementation**: Run `/implement_plan` with this file path:
+```
+/implement_plan at thoughts/shared/plans/2026-01-26-ralph-wiggum-mvp.md
+```
+
+**If you need clarification on existing patterns**: Use `/research_codebase` to investigate:
+```
+/research_codebase how does the existing OpenWebUI pipe work in letta_pipe.py?
+/research_codebase how does the Honcho client handle message persistence?
+```
+
+**If this plan needs updates**: Use `/iterate_plan` to refine:
+```
+/iterate_plan thoughts/shared/plans/2026-01-26-ralph-wiggum-mvp.md - need to add X
+```
+
 ## Current State Analysis
 
 **Existing YouLab**: Complex Letta-based system with curriculum configs, memory blocks, background agents, diff approval. Too heavy for MVP.
@@ -144,6 +162,8 @@ ralph = [
 - [ ] `uv run python -c "from ralph.config import settings"` - requires `RALPH_OPENROUTER_API_KEY` env var set
 
 **Implementation Note**: Config will fail to import without env vars. That's expected - just verify the files exist and pass lint/typecheck.
+
+**If stuck**: Use `/research_codebase how does pydantic-settings work in this codebase?` to find similar patterns.
 
 ---
 
@@ -312,6 +332,8 @@ def persist_message_fire_and_forget(
 
 **Implementation Note**: Honcho client is lazy-loaded and gracefully handles missing service. Agent can verify code correctness but not actual Honcho integration.
 
+**If stuck**: Use `/research_codebase how does the existing Honcho client work?` - reference `src/youlab_server/honcho/client.py` for patterns.
+
 ---
 
 ## Phase 3: OpenHands Client
@@ -468,6 +490,8 @@ def get_manager() -> OpenHandsManager:
 
 **Implementation Note**: OpenHands SDK requires Docker and API keys. Agent can verify code structure and imports from `TYPE_CHECKING` blocks, but actual conversation creation requires running services.
 
+**If stuck on OpenHands API**: The SDK may have changed - use web search to verify current API patterns at https://docs.openhands.dev/sdk
+
 ---
 
 ## Phase 4: Query Honcho Tool
@@ -602,6 +626,8 @@ class QueryHonchoTool(_get_base_class()):
 - [ ] Tool returns graceful message for new students
 
 **Implementation Note**: The tool imports `openhands.tools.base.BaseTool` - this will fail if OpenHands isn't installed. Use `TYPE_CHECKING` guard or make OpenHands optional import with fallback.
+
+**If stuck**: Use `/research_codebase how does query_honcho tool work in the existing codebase?` - reference `src/youlab_server/tools/dialectic.py` for the pattern.
 
 ---
 
@@ -810,6 +836,8 @@ class Pipe:
 - [ ] Verify query_honcho tool works after conversation history exists
 
 **Implementation Note**: The `pipe()` method imports OpenHands lazily. Pipe class itself should instantiate without any external deps so we can at least verify the class structure.
+
+**If stuck**: Use `/research_codebase how does the existing letta_pipe.py handle streaming?` - reference `src/youlab_server/pipelines/letta_pipe.py` for OpenWebUI Pipe patterns.
 
 ---
 
@@ -1043,6 +1071,45 @@ To switch from existing YouLab to Ralph:
 1. Update OpenWebUI pipeline to use `ralph/pipe.py` instead of `letta_pipe.py`
 2. Set environment variables (RALPH_OPENROUTER_API_KEY, etc.)
 3. Ensure Docker is available if using sandbox mode
+
+---
+
+## Agent Implementation Workflow
+
+When implementing this plan, follow this workflow:
+
+### Starting Implementation
+```
+/implement_plan at thoughts/shared/plans/2026-01-26-ralph-wiggum-mvp.md
+```
+
+### When You Need to Understand Existing Code
+Use `/research_codebase` to investigate patterns before writing new code:
+```
+/research_codebase how does the OpenWebUI pipe pattern work?
+/research_codebase how does Honcho client handle lazy initialization?
+/research_codebase what's the pattern for fire-and-forget async tasks?
+```
+
+### When You're Stuck or Something Doesn't Work
+1. First, check if the OpenHands API has changed - web search for current docs
+2. Use `/research_codebase` to find similar patterns in existing code
+3. If the plan itself needs updating, use `/iterate_plan`:
+   ```
+   /iterate_plan thoughts/shared/plans/2026-01-26-ralph-wiggum-mvp.md - OpenHands API changed, need to update Phase 3
+   ```
+
+### After Each Phase
+1. Run `make check-agent` to verify lint + typecheck
+2. Run the automated verification commands listed in Success Criteria
+3. Mark the phase complete before moving to the next
+
+### Key Principle: Fail Fast on External Deps
+Since OpenHands/Honcho won't be available during implementation:
+- Write code that **imports lazily** (inside functions, not module level)
+- Use `TYPE_CHECKING` guards for type hints
+- Provide **fallbacks** where possible (e.g., `_get_base_class()` pattern)
+- Focus on verifying **structure and logic**, not integration
 
 ---
 
