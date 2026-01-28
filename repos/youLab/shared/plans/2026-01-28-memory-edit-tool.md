@@ -38,9 +38,14 @@ The tool validates `old_string` uniqueness and creates proposals through the exi
 ## Implementation Approach
 
 Create a single new file `src/ralph/tools/memory_blocks.py` with an Agno Toolkit class. The toolkit:
-1. Receives `user_id` at construction (set per-request in server.py)
-2. Uses async DoltClient methods directly
+1. Uses Agno's `RunContext` dependency injection for `user_id` (like HonchoTools)
+2. Uses async DoltClient methods via thread pool (same pattern as HonchoTools)
 3. Follows Claude Code error handling patterns exactly
+
+**Key pattern from HonchoTools** (`src/ralph/tools/honcho_tools.py:34-57`):
+- Tool methods receive `run_context: RunContext` as first param (auto-injected by Agno)
+- Access user via `run_context.user_id` or `run_context.dependencies.get("user_id")`
+- Handle async calls in sync tool via `concurrent.futures.ThreadPoolExecutor`
 
 ## Phase 1: Create MemoryBlockTools Toolkit
 
@@ -57,15 +62,40 @@ Implement the core toolkit with all three tools.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import asyncio
+import concurrent.futures
+import logging
+from typing import TYPE_CHECKING, Any
 
-import structlog
-from agno.tools.toolkit import Toolkit
+from agno.tools import Toolkit
 
 if TYPE_CHECKING:
-    from ralph.dolt import DoltClient
+    from agno.run import RunContext
 
-log = structlog.get_logger()
+from ralph.dolt import get_dolt_client
+
+logger = logging.getLogger(__name__)
+
+
+def _run_async(coro: Any) -> Any:
+    """Run async coroutine from sync context (handles nested event loops)."""
+    try:
+        asyncio.get_running_loop()
+        # In async context, use thread pool to avoid blocking
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            return pool.submit(asyncio.run, coro).result(timeout=30)
+    except RuntimeError:
+        # No running loop, can use asyncio.run directly
+        return asyncio.run(coro)
+
+
+def _get_user_id(run_context: RunContext) -> str | None:
+    """Extract user_id from RunContext (via user_id or dependencies)."""
+    user_id = run_context.user_id
+    if not user_id:
+        deps = run_context.dependencies or {}
+        user_id = deps.get("user_id")
+    return user_id
 
 
 class MemoryBlockTools(Toolkit):
@@ -77,25 +107,17 @@ class MemoryBlockTools(Toolkit):
     require user approval before being applied.
 
     Inspired by Claude Code's Edit tool - uses surgical string replacement.
+
+    Uses Agno's RunContext dependency injection for user_id (same as HonchoTools).
     """
 
-    def __init__(
-        self,
-        dolt: DoltClient,
-        user_id: str,
-        agent_id: str = "ralph",
-        **kwargs,
-    ) -> None:
+    def __init__(self, agent_id: str = "ralph", **kwargs: Any) -> None:
         """
         Initialize memory block tools.
 
         Args:
-            dolt: DoltClient instance for database operations
-            user_id: The student's user ID
             agent_id: Identifier for this agent (used in proposals)
         """
-        self.dolt = dolt
-        self.user_id = user_id
         self.agent_id = agent_id
 
         tools = [
@@ -106,16 +128,27 @@ class MemoryBlockTools(Toolkit):
 
         super().__init__(name="memory_block_tools", tools=tools, **kwargs)
 
-    async def list_memory_blocks(self) -> str:
+    def list_memory_blocks(self, run_context: RunContext) -> str:
         """
         List all available memory blocks for the current student.
+
+        Args:
+            run_context: Agno run context with user_id (auto-injected).
 
         Returns:
             A formatted list of memory blocks with their labels and titles,
             or a message if no blocks exist.
         """
+        user_id = _get_user_id(run_context)
+        if not user_id:
+            return "Unable to identify student. No user context available."
+
         try:
-            blocks = await self.dolt.list_blocks(self.user_id)
+            async def _list() -> list:
+                dolt = await get_dolt_client()
+                return await dolt.list_blocks(user_id)
+
+            blocks = _run_async(_list())
 
             if not blocks:
                 return "No memory blocks exist for this student yet."
@@ -128,23 +161,32 @@ class MemoryBlockTools(Toolkit):
             return "\n".join(lines)
 
         except Exception as e:
-            log.exception("list_memory_blocks_error", user_id=self.user_id, error=str(e))
+            logger.warning("list_memory_blocks failed: %s", e)
             return f"Error listing memory blocks: {e}"
 
-    async def read_memory_block(self, block_label: str) -> str:
+    def read_memory_block(self, run_context: RunContext, block_label: str) -> str:
         """
         Read the current content of a memory block.
 
         Use this before proposing edits to see the exact current content.
 
         Args:
+            run_context: Agno run context with user_id (auto-injected).
             block_label: The label/identifier of the block to read (e.g., "student", "goals")
 
         Returns:
             The block's current content, or an error message if not found.
         """
+        user_id = _get_user_id(run_context)
+        if not user_id:
+            return "Unable to identify student. No user context available."
+
         try:
-            block = await self.dolt.get_block(self.user_id, block_label)
+            async def _read():
+                dolt = await get_dolt_client()
+                return await dolt.get_block(user_id, block_label)
+
+            block = _run_async(_read())
 
             if not block:
                 return f"Memory block '{block_label}' not found."
@@ -155,16 +197,12 @@ class MemoryBlockTools(Toolkit):
             return f"# {title}\n\n{body}"
 
         except Exception as e:
-            log.exception(
-                "read_memory_block_error",
-                user_id=self.user_id,
-                block_label=block_label,
-                error=str(e),
-            )
+            logger.warning("read_memory_block failed for %s: %s", block_label, e)
             return f"Error reading memory block: {e}"
 
-    async def propose_memory_edit(
+    def propose_memory_edit(
         self,
+        run_context: RunContext,
         block_label: str,
         old_string: str,
         new_string: str,
@@ -182,6 +220,7 @@ class MemoryBlockTools(Toolkit):
         The edit will FAIL if old_string is not found or is not unique.
 
         Args:
+            run_context: Agno run context with user_id (auto-injected).
             block_label: The label of the block to edit (e.g., "student", "goals")
             old_string: The exact text to find and replace. Must be unique unless replace_all=True.
             new_string: The text to replace it with. Must be different from old_string.
@@ -191,6 +230,10 @@ class MemoryBlockTools(Toolkit):
         Returns:
             Success message if proposal created, or error message explaining what went wrong.
         """
+        user_id = _get_user_id(run_context)
+        if not user_id:
+            return "Unable to identify student. No user context available."
+
         # Validate inputs
         if old_string == new_string:
             return "Error: old_string and new_string must be different."
@@ -202,53 +245,61 @@ class MemoryBlockTools(Toolkit):
             return "Error: reasoning is required to explain the edit to the user."
 
         try:
-            # Get current block content
-            block = await self.dolt.get_block(self.user_id, block_label)
+            async def _propose():
+                dolt = await get_dolt_client()
 
-            if not block:
-                return f"Error: Memory block '{block_label}' not found."
+                # Get current block content
+                block = await dolt.get_block(user_id, block_label)
+                if not block:
+                    return None, f"Error: Memory block '{block_label}' not found."
 
-            current_body = block.body or ""
+                current_body = block.body or ""
 
-            # Check if old_string exists
-            if old_string not in current_body:
-                return (
-                    f"Error: old_string not found in block '{block_label}'. "
-                    "Make sure you've read the block first and the text matches exactly "
-                    "(including whitespace and newlines)."
+                # Check if old_string exists
+                if old_string not in current_body:
+                    return None, (
+                        f"Error: old_string not found in block '{block_label}'. "
+                        "Make sure you've read the block first and the text matches exactly "
+                        "(including whitespace and newlines)."
+                    )
+
+                # Check uniqueness unless replace_all
+                occurrence_count = current_body.count(old_string)
+                if occurrence_count > 1 and not replace_all:
+                    return None, (
+                        f"Error: old_string appears {occurrence_count} times in block '{block_label}'. "
+                        "Provide a larger unique string with more surrounding context, "
+                        "or set replace_all=True to replace all occurrences."
+                    )
+
+                # Apply the replacement
+                if replace_all:
+                    new_body = current_body.replace(old_string, new_string)
+                else:
+                    new_body = current_body.replace(old_string, new_string, 1)
+
+                # Create the proposal via Dolt
+                branch_name = await dolt.create_proposal(
+                    user_id=user_id,
+                    block_label=block_label,
+                    new_body=new_body,
+                    agent_id=self.agent_id,
+                    reasoning=reasoning,
+                    confidence="medium",
                 )
 
-            # Check uniqueness unless replace_all
-            occurrence_count = current_body.count(old_string)
-            if occurrence_count > 1 and not replace_all:
-                return (
-                    f"Error: old_string appears {occurrence_count} times in block '{block_label}'. "
-                    "Provide a larger unique string with more surrounding context, "
-                    "or set replace_all=True to replace all occurrences."
-                )
+                return branch_name, None
 
-            # Apply the replacement
-            if replace_all:
-                new_body = current_body.replace(old_string, new_string)
-            else:
-                new_body = current_body.replace(old_string, new_string, 1)
+            branch_name, error = _run_async(_propose())
 
-            # Create the proposal via Dolt
-            branch_name = await self.dolt.create_proposal(
-                user_id=self.user_id,
-                block_label=block_label,
-                new_body=new_body,
-                agent_id=self.agent_id,
-                reasoning=reasoning,
-                confidence="medium",
-            )
+            if error:
+                return error
 
-            log.info(
-                "memory_edit_proposed",
-                user_id=self.user_id,
-                block_label=block_label,
-                branch_name=branch_name,
-                occurrences_replaced=occurrence_count if replace_all else 1,
+            logger.info(
+                "Memory edit proposed: user=%s block=%s branch=%s",
+                user_id,
+                block_label,
+                branch_name,
             )
 
             return (
@@ -258,60 +309,42 @@ class MemoryBlockTools(Toolkit):
             )
 
         except Exception as e:
-            log.exception(
-                "propose_memory_edit_error",
-                user_id=self.user_id,
-                block_label=block_label,
-                error=str(e),
-            )
+            logger.warning("propose_memory_edit failed for %s: %s", block_label, e)
             return f"Error creating edit proposal: {e}"
 ```
 
 #### 2. Update Tools __init__.py
 **File**: `src/ralph/tools/__init__.py`
 
+Add the new export:
 ```python
 """Custom tools for Ralph agent."""
 
+from ralph.tools.honcho_tools import HonchoTools
 from ralph.tools.memory_blocks import MemoryBlockTools
-from ralph.tools.query_honcho import QueryHonchoTool
 
-__all__ = ["MemoryBlockTools", "QueryHonchoTool"]
+__all__ = ["HonchoTools", "MemoryBlockTools"]
 ```
 
 #### 3. Integrate Toolkit in Server
 **File**: `src/ralph/server.py`
 
-Add import at top (around line 35):
+Add import at top (around line 37):
 ```python
-from ralph.tools.memory_blocks import MemoryBlockTools
+from ralph.tools import HonchoTools, MemoryBlockTools
 ```
 
 Update the agent tools list (around line 205-208):
 ```python
-        # Build the agent with tools (strip Agno fields Mistral doesn't accept)
-        agent = Agent(
-            model=OpenRouter(
-                id=settings.openrouter_model,
-                api_key=settings.openrouter_api_key,
-            ),
             tools=[
                 strip_agno_fields(ShellTools(base_dir=workspace)),
                 strip_agno_fields(FileTools(base_dir=workspace)),
-                strip_agno_fields(
-                    MemoryBlockTools(
-                        dolt=dolt,
-                        user_id=request.user_id,
-                        agent_id="ralph",
-                    )
-                ),
+                HonchoTools(),
+                MemoryBlockTools(),  # Uses RunContext for user_id
             ],
-            instructions=instructions,
-            markdown=True,
-        )
 ```
 
-Note: The `dolt` variable is already available in scope from `await get_dolt_client()` at line 167.
+Note: `MemoryBlockTools` gets `user_id` via Agno's `RunContext` injection (same as `HonchoTools`), so no constructor parameters needed. The `dependencies={"user_id": ...}` passed to `agent.arun()` at line 262-265 makes it available.
 
 ### Success Criteria:
 
@@ -345,12 +378,22 @@ Create comprehensive unit tests for the MemoryBlockTools toolkit.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from ralph.dolt import MemoryBlock
 from ralph.tools.memory_blocks import MemoryBlockTools
+
+
+@pytest.fixture
+def mock_run_context() -> MagicMock:
+    """Create a mock RunContext with user_id."""
+    ctx = MagicMock()
+    ctx.user_id = "test-user-123"
+    ctx.dependencies = {"user_id": "test-user-123"}
+    return ctx
 
 
 @pytest.fixture
@@ -360,21 +403,25 @@ def mock_dolt() -> MagicMock:
 
 
 @pytest.fixture
-def tools(mock_dolt: MagicMock) -> MemoryBlockTools:
-    """Create MemoryBlockTools instance with mock client."""
-    return MemoryBlockTools(
-        dolt=mock_dolt,
-        user_id="test-user-123",
-        agent_id="test-agent",
-    )
+def tools() -> MemoryBlockTools:
+    """Create MemoryBlockTools instance."""
+    return MemoryBlockTools(agent_id="test-agent")
+
+
+def make_run_async_mock(mock_dolt: MagicMock) -> Any:
+    """Create a mock for _run_async that uses the mock_dolt."""
+    def _mock_run_async(coro: Any) -> Any:
+        # Extract the coroutine and run it with our mock
+        import asyncio
+        return asyncio.get_event_loop().run_until_complete(coro)
+    return _mock_run_async
 
 
 class TestListMemoryBlocks:
     """Tests for list_memory_blocks tool."""
 
-    @pytest.mark.anyio
-    async def test_list_blocks_returns_formatted_list(
-        self, tools: MemoryBlockTools, mock_dolt: MagicMock
+    def test_list_blocks_returns_formatted_list(
+        self, tools: MemoryBlockTools, mock_run_context: MagicMock, mock_dolt: MagicMock
     ) -> None:
         """Should return formatted list of blocks."""
         mock_dolt.list_blocks = AsyncMock(
@@ -398,29 +445,41 @@ class TestListMemoryBlocks:
             ]
         )
 
-        result = await tools.list_memory_blocks()
+        with patch("ralph.tools.memory_blocks.get_dolt_client", AsyncMock(return_value=mock_dolt)):
+            with patch("ralph.tools.memory_blocks._run_async", make_run_async_mock(mock_dolt)):
+                result = tools.list_memory_blocks(mock_run_context)
 
         assert "student: Student Profile" in result
         assert "goals: Learning Goals" in result
 
-    @pytest.mark.anyio
-    async def test_list_blocks_empty(
-        self, tools: MemoryBlockTools, mock_dolt: MagicMock
+    def test_list_blocks_empty(
+        self, tools: MemoryBlockTools, mock_run_context: MagicMock, mock_dolt: MagicMock
     ) -> None:
         """Should handle no blocks gracefully."""
         mock_dolt.list_blocks = AsyncMock(return_value=[])
 
-        result = await tools.list_memory_blocks()
+        with patch("ralph.tools.memory_blocks.get_dolt_client", AsyncMock(return_value=mock_dolt)):
+            with patch("ralph.tools.memory_blocks._run_async", make_run_async_mock(mock_dolt)):
+                result = tools.list_memory_blocks(mock_run_context)
 
         assert "No memory blocks exist" in result
+
+    def test_list_blocks_no_user(self, tools: MemoryBlockTools) -> None:
+        """Should fail gracefully when no user_id available."""
+        ctx = MagicMock()
+        ctx.user_id = None
+        ctx.dependencies = {}
+
+        result = tools.list_memory_blocks(ctx)
+
+        assert "Unable to identify student" in result
 
 
 class TestReadMemoryBlock:
     """Tests for read_memory_block tool."""
 
-    @pytest.mark.anyio
-    async def test_read_block_returns_content(
-        self, tools: MemoryBlockTools, mock_dolt: MagicMock
+    def test_read_block_returns_content(
+        self, tools: MemoryBlockTools, mock_run_context: MagicMock, mock_dolt: MagicMock
     ) -> None:
         """Should return block content with title."""
         mock_dolt.get_block = AsyncMock(
@@ -434,19 +493,22 @@ class TestReadMemoryBlock:
             )
         )
 
-        result = await tools.read_memory_block("student")
+        with patch("ralph.tools.memory_blocks.get_dolt_client", AsyncMock(return_value=mock_dolt)):
+            with patch("ralph.tools.memory_blocks._run_async", make_run_async_mock(mock_dolt)):
+                result = tools.read_memory_block(mock_run_context, "student")
 
         assert "# Student Profile" in result
         assert "Test content here" in result
 
-    @pytest.mark.anyio
-    async def test_read_block_not_found(
-        self, tools: MemoryBlockTools, mock_dolt: MagicMock
+    def test_read_block_not_found(
+        self, tools: MemoryBlockTools, mock_run_context: MagicMock, mock_dolt: MagicMock
     ) -> None:
         """Should return error for missing block."""
         mock_dolt.get_block = AsyncMock(return_value=None)
 
-        result = await tools.read_memory_block("nonexistent")
+        with patch("ralph.tools.memory_blocks.get_dolt_client", AsyncMock(return_value=mock_dolt)):
+            with patch("ralph.tools.memory_blocks._run_async", make_run_async_mock(mock_dolt)):
+                result = tools.read_memory_block(mock_run_context, "nonexistent")
 
         assert "not found" in result
 
@@ -454,9 +516,8 @@ class TestReadMemoryBlock:
 class TestProposeMemoryEdit:
     """Tests for propose_memory_edit tool."""
 
-    @pytest.mark.anyio
-    async def test_propose_edit_success(
-        self, tools: MemoryBlockTools, mock_dolt: MagicMock
+    def test_propose_edit_success(
+        self, tools: MemoryBlockTools, mock_run_context: MagicMock, mock_dolt: MagicMock
     ) -> None:
         """Should create proposal when old_string is unique."""
         mock_dolt.get_block = AsyncMock(
@@ -471,21 +532,23 @@ class TestProposeMemoryEdit:
         )
         mock_dolt.create_proposal = AsyncMock(return_value="agent/test-user-123/student")
 
-        result = await tools.propose_memory_edit(
-            block_label="student",
-            old_string="likes math",
-            new_string="loves mathematics",
-            reasoning="Student expressed stronger enthusiasm",
-        )
+        with patch("ralph.tools.memory_blocks.get_dolt_client", AsyncMock(return_value=mock_dolt)):
+            with patch("ralph.tools.memory_blocks._run_async", make_run_async_mock(mock_dolt)):
+                result = tools.propose_memory_edit(
+                    mock_run_context,
+                    block_label="student",
+                    old_string="likes math",
+                    new_string="loves mathematics",
+                    reasoning="Student expressed stronger enthusiasm",
+                )
 
         assert "proposal created" in result.lower()
         mock_dolt.create_proposal.assert_called_once()
         call_args = mock_dolt.create_proposal.call_args
         assert "loves mathematics" in call_args.kwargs["new_body"]
 
-    @pytest.mark.anyio
-    async def test_propose_edit_old_string_not_found(
-        self, tools: MemoryBlockTools, mock_dolt: MagicMock
+    def test_propose_edit_old_string_not_found(
+        self, tools: MemoryBlockTools, mock_run_context: MagicMock, mock_dolt: MagicMock
     ) -> None:
         """Should fail when old_string not in block."""
         mock_dolt.get_block = AsyncMock(
@@ -499,19 +562,21 @@ class TestProposeMemoryEdit:
             )
         )
 
-        result = await tools.propose_memory_edit(
-            block_label="student",
-            old_string="not in content",
-            new_string="replacement",
-            reasoning="test",
-        )
+        with patch("ralph.tools.memory_blocks.get_dolt_client", AsyncMock(return_value=mock_dolt)):
+            with patch("ralph.tools.memory_blocks._run_async", make_run_async_mock(mock_dolt)):
+                result = tools.propose_memory_edit(
+                    mock_run_context,
+                    block_label="student",
+                    old_string="not in content",
+                    new_string="replacement",
+                    reasoning="test",
+                )
 
         assert "not found" in result.lower()
         assert "read the block first" in result.lower()
 
-    @pytest.mark.anyio
-    async def test_propose_edit_non_unique_fails(
-        self, tools: MemoryBlockTools, mock_dolt: MagicMock
+    def test_propose_edit_non_unique_fails(
+        self, tools: MemoryBlockTools, mock_run_context: MagicMock, mock_dolt: MagicMock
     ) -> None:
         """Should fail when old_string appears multiple times."""
         mock_dolt.get_block = AsyncMock(
@@ -525,19 +590,21 @@ class TestProposeMemoryEdit:
             )
         )
 
-        result = await tools.propose_memory_edit(
-            block_label="student",
-            old_string="The student",
-            new_string="This student",
-            reasoning="test",
-        )
+        with patch("ralph.tools.memory_blocks.get_dolt_client", AsyncMock(return_value=mock_dolt)):
+            with patch("ralph.tools.memory_blocks._run_async", make_run_async_mock(mock_dolt)):
+                result = tools.propose_memory_edit(
+                    mock_run_context,
+                    block_label="student",
+                    old_string="The student",
+                    new_string="This student",
+                    reasoning="test",
+                )
 
         assert "appears 2 times" in result
         assert "replace_all" in result.lower()
 
-    @pytest.mark.anyio
-    async def test_propose_edit_replace_all(
-        self, tools: MemoryBlockTools, mock_dolt: MagicMock
+    def test_propose_edit_replace_all(
+        self, tools: MemoryBlockTools, mock_run_context: MagicMock, mock_dolt: MagicMock
     ) -> None:
         """Should replace all occurrences when replace_all=True."""
         mock_dolt.get_block = AsyncMock(
@@ -552,13 +619,16 @@ class TestProposeMemoryEdit:
         )
         mock_dolt.create_proposal = AsyncMock(return_value="agent/test-user-123/student")
 
-        result = await tools.propose_memory_edit(
-            block_label="student",
-            old_string="The student",
-            new_string="This student",
-            reasoning="test",
-            replace_all=True,
-        )
+        with patch("ralph.tools.memory_blocks.get_dolt_client", AsyncMock(return_value=mock_dolt)):
+            with patch("ralph.tools.memory_blocks._run_async", make_run_async_mock(mock_dolt)):
+                result = tools.propose_memory_edit(
+                    mock_run_context,
+                    block_label="student",
+                    old_string="The student",
+                    new_string="This student",
+                    reasoning="test",
+                    replace_all=True,
+                )
 
         assert "proposal created" in result.lower()
         call_args = mock_dolt.create_proposal.call_args
@@ -566,12 +636,12 @@ class TestProposeMemoryEdit:
         assert new_body.count("This student") == 2
         assert "The student" not in new_body
 
-    @pytest.mark.anyio
-    async def test_propose_edit_same_string_fails(
-        self, tools: MemoryBlockTools, mock_dolt: MagicMock
+    def test_propose_edit_same_string_fails(
+        self, tools: MemoryBlockTools, mock_run_context: MagicMock
     ) -> None:
         """Should fail when old_string equals new_string."""
-        result = await tools.propose_memory_edit(
+        result = tools.propose_memory_edit(
+            mock_run_context,
             block_label="student",
             old_string="same",
             new_string="same",
@@ -580,12 +650,12 @@ class TestProposeMemoryEdit:
 
         assert "must be different" in result.lower()
 
-    @pytest.mark.anyio
-    async def test_propose_edit_empty_old_string_fails(
-        self, tools: MemoryBlockTools, mock_dolt: MagicMock
+    def test_propose_edit_empty_old_string_fails(
+        self, tools: MemoryBlockTools, mock_run_context: MagicMock
     ) -> None:
         """Should fail when old_string is empty."""
-        result = await tools.propose_memory_edit(
+        result = tools.propose_memory_edit(
+            mock_run_context,
             block_label="student",
             old_string="",
             new_string="something",
@@ -594,12 +664,12 @@ class TestProposeMemoryEdit:
 
         assert "cannot be empty" in result.lower()
 
-    @pytest.mark.anyio
-    async def test_propose_edit_missing_reasoning_fails(
-        self, tools: MemoryBlockTools, mock_dolt: MagicMock
+    def test_propose_edit_missing_reasoning_fails(
+        self, tools: MemoryBlockTools, mock_run_context: MagicMock
     ) -> None:
         """Should fail when reasoning is empty."""
-        result = await tools.propose_memory_edit(
+        result = tools.propose_memory_edit(
+            mock_run_context,
             block_label="student",
             old_string="old",
             new_string="new",
@@ -608,19 +678,21 @@ class TestProposeMemoryEdit:
 
         assert "reasoning is required" in result.lower()
 
-    @pytest.mark.anyio
-    async def test_propose_edit_block_not_found(
-        self, tools: MemoryBlockTools, mock_dolt: MagicMock
+    def test_propose_edit_block_not_found(
+        self, tools: MemoryBlockTools, mock_run_context: MagicMock, mock_dolt: MagicMock
     ) -> None:
         """Should fail when block doesn't exist."""
         mock_dolt.get_block = AsyncMock(return_value=None)
 
-        result = await tools.propose_memory_edit(
-            block_label="nonexistent",
-            old_string="old",
-            new_string="new",
-            reasoning="test",
-        )
+        with patch("ralph.tools.memory_blocks.get_dolt_client", AsyncMock(return_value=mock_dolt)):
+            with patch("ralph.tools.memory_blocks._run_async", make_run_async_mock(mock_dolt)):
+                result = tools.propose_memory_edit(
+                    mock_run_context,
+                    block_label="nonexistent",
+                    old_string="old",
+                    new_string="new",
+                    reasoning="test",
+                )
 
         assert "not found" in result.lower()
 ```
@@ -648,21 +720,23 @@ Add documentation to the agent's system prompt about how to use the memory edit 
 #### 1. Update Base Instructions in Server
 **File**: `src/ralph/server.py`
 
-Update the base instructions (around line 157-162) to include tool guidance:
+Update the base instructions (around line 157-166) to add memory block tool guidance:
 
 ```python
         # Build instructions
-        base_instructions = f"""You are a helpful coding assistant with access to a workspace.
+        base_instructions = f"""You are a helpful AI tutor assistant.
+Your workspace is: {workspace}
+You can read and write files, and execute shell commands within this workspace.
 
-Your workspace directory is: {workspace}
-All file operations and shell commands are automatically scoped to this directory.
-When listing files or running commands, they execute in your workspace.
-You can create, read, and edit files to help the user with their tasks.
+You also have access to a `query_student` tool that lets you ask questions about
+the current student's learning history and context. Use this tool when you need
+to recall previous interactions, understand their learning style, or get context
+about what you've discussed before.
 
 ## Memory Blocks
 
 You have access to memory blocks that contain persistent information about the student.
-These blocks are shown above in "Student Context" when available.
+These blocks are shown below in "Student Context" when available.
 
 To update memory blocks, use the memory block tools:
 1. First, use `read_memory_block` to see the exact current content
@@ -671,7 +745,9 @@ To update memory blocks, use the memory block tools:
 
 Important: The `old_string` in your edit must match the block content exactly,
 including whitespace and newlines. If the string appears multiple times,
-provide more surrounding context to make it unique, or use `replace_all=True`."""
+provide more surrounding context to make it unique, or use `replace_all=True`.
+
+Always be helpful, encouraging, and focused on the student's learning goals."""
 ```
 
 ### Success Criteria:
