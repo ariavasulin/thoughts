@@ -145,9 +145,9 @@ Modify the streaming generator (lines 238-258):
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Type checking passes: `uv run basedpyright src/ralph/`
-- [ ] Linting passes: `uv run ruff check src/ralph/`
-- [ ] Server starts without errors: `uv run ralph-server`
+- [x] Type checking passes: `uv run basedpyright src/ralph/`
+- [x] Linting passes: `uv run ruff check src/ralph/`
+- [x] Server starts without errors: `uv run ralph-server`
 
 #### Manual Verification:
 - [ ] Send a chat message through OpenWebUI
@@ -278,12 +278,12 @@ __all__ = ["HonchoTools"]
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Type checking passes: `uv run basedpyright src/ralph/`
-- [ ] Linting passes: `uv run ruff check src/ralph/`
-- [ ] Import works: `python -c "from ralph.tools import HonchoTools"`
+- [x] Type checking passes: `uv run basedpyright src/ralph/`
+- [x] Linting passes: `uv run ruff check src/ralph/`
+- [x] Import works: `python -c "from ralph.tools import HonchoTools"`
 
 #### Manual Verification:
-- [ ] N/A - tool not registered with agent yet
+- [x] N/A - tool not registered with agent yet
 
 **Implementation Note**: This phase creates the toolkit but doesn't register it. Proceed to Phase 3 to integrate with the agent.
 
@@ -373,9 +373,9 @@ Always be helpful, encouraging, and focused on the student's learning goals."""
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Type checking passes: `uv run basedpyright src/ralph/`
-- [ ] Linting passes: `uv run ruff check src/ralph/`
-- [ ] Server starts without errors: `uv run ralph-server`
+- [x] Type checking passes: `uv run basedpyright src/ralph/`
+- [x] Linting passes: `uv run ruff check src/ralph/`
+- [x] Server starts without errors: `uv run ralph-server`
 
 #### Manual Verification:
 - [ ] Send a message asking about previous conversations
