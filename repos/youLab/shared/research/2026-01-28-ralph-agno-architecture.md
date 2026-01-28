@@ -162,9 +162,9 @@ class Settings(BaseSettings):
     model_config = {"env_prefix": "RALPH_"}
 ```
 
-### OpenHands Client (Unused)
+### OpenHands Client (Being Removed)
 
-The file `ralph/ralph/openhands_client.py` exists but is not currently used. It was part of an earlier design that used OpenHands SDK for sandboxed execution. The current implementation uses Agno with local FileTools/ShellTools instead.
+The file `ralph/ralph/openhands_client.py` exists but is being phased out. It was part of an earlier design that used OpenHands SDK for sandboxed execution. The project direction is now Agno-only with local FileTools/ShellTools.
 
 ### Ralph Autonomous Loop Script (`ralph/ralph.sh`)
 
@@ -275,6 +275,9 @@ OpenWebUI → Letta Pipe (HTTP) → YouLab Server (FastAPI:8100) → Letta Serve
 ## Open Questions
 
 1. **Agno Dependency**: The `agno` package is not listed in pyproject.toml ralph dependencies - how is it being installed?
-2. **OpenHands Client**: `ralph/openhands_client.py` exists but is unused - should it be removed or is there a plan to use it?
-3. **Dolt Migration**: CLAUDE.md mentioned Dolt for versioned memory - is this still planned or abandoned in favor of the stateless Ralph approach?
-4. **Honcho Integration**: The Honcho client exists in Ralph but doesn't appear to be called from the server - is message persistence implemented?
+2. **Honcho Integration**: The Honcho client exists in Ralph but doesn't appear to be called from the server - is message persistence implemented?
+
+## Resolved Questions
+
+- **OpenHands**: Being phased out, Agno-only direction confirmed
+- **Dolt Migration**: Planned but out of scope for current work

@@ -59,10 +59,10 @@ Integrate Beads (bd) - a Git-backed issue tracker for AI coding agents - into th
 
 ### Success Criteria
 
-- [ ] `bd --version` returns version info
-- [ ] `.beads/` directory exists with `issues.jsonl`
-- [ ] `bd setup claude --check` passes
-- [ ] `bd ready` runs without error
+- [x] `bd --version` returns version info
+- [x] `.beads/` directory exists with `issues.jsonl`
+- [x] `bd setup claude --check` passes
+- [x] `bd ready` runs without error
 
 ### Manual Verification
 
@@ -94,7 +94,6 @@ Integrate Beads (bd) - a Git-backed issue tracker for AI coding agents - into th
    Relationship to other systems:
    - **Linear**: Project-level planning and tracking
    - **beads**: Implementation-level task persistence
-   - **Inline TODOs**: Quick code markers for single-session work
    ```
 
 2. **Update universal CLAUDE.md** - Modify task approach section
@@ -108,20 +107,13 @@ Integrate Beads (bd) - a Git-backed issue tracker for AI coding agents - into th
    - Run `bd start <id>` before working on a task
    - Run `bd close <id> --reason "description"` when done
    - Run `bd sync` before ending sessions (CRITICAL)
-
-   **For quick code markers**, embed inline TODOs:
-   ```python
-   # TODO(feature): validate input before processing
-   ```
-
-   Use beads for multi-session work; inline TODOs for single-session notes.
    ```
 
 ### Success Criteria
 
-- [ ] Project CLAUDE.md has Task Management section
-- [ ] Universal CLAUDE.md has updated task management guidance
-- [ ] No duplicate/conflicting instructions about TodoWrite
+- [x] Project CLAUDE.md has Task Management section
+- [x] Universal CLAUDE.md has updated task management guidance
+- [x] No duplicate/conflicting instructions about TodoWrite
 
 ### Manual Verification
 
@@ -160,9 +152,9 @@ Integrate Beads (bd) - a Git-backed issue tracker for AI coding agents - into th
 
 ### Success Criteria
 
-- [ ] `hack/create_worktree.sh` includes beads initialization
-- [ ] New worktrees get their own `.beads/` directory
-- [ ] Cleanup script reminds about `bd sync`
+- [x] `hack/create_worktree.sh` includes beads initialization
+- [x] New worktrees get their own `.beads/` directory
+- [x] Cleanup script reminds about `bd sync`
 
 ### Manual Verification
 
@@ -195,8 +187,8 @@ Integrate Beads (bd) - a Git-backed issue tracker for AI coding agents - into th
 
 ### Success Criteria
 
-- [ ] `.beads/config.yaml` exists with project settings
-- [ ] Config requires descriptions on issue creation
+- [x] `.beads/config.yaml` exists with project settings
+- [ ] Config requires descriptions on issue creation (note: not enforced in current beads version)
 
 ### Manual Verification
 
