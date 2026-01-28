@@ -249,10 +249,10 @@ __all__ = [
 ### Success Criteria
 
 #### Automated Verification
-- [ ] Models import without error: `python -c "from ralph.background import *"`
-- [ ] Type checking passes: `uv run basedpyright src/ralph/background/`
-- [ ] Linting passes: `uv run ruff check src/ralph/background/`
-- [ ] Migration SQL is valid syntax
+- [x] Models import without error: `python -c "from ralph.background import *"`
+- [x] Type checking passes: `uv run basedpyright src/ralph/background/`
+- [x] Linting passes: `uv run ruff check src/ralph/background/`
+- [x] Migration SQL is valid syntax
 
 #### Manual Verification
 - [ ] Migration applies cleanly to Dolt: `docker exec youlab-dolt-1 dolt sql < migrations/003_background_tasks.sql`
@@ -608,9 +608,9 @@ from ralph.background.models import (
 ### Success Criteria
 
 #### Automated Verification
-- [ ] Type checking passes: `uv run basedpyright src/ralph/dolt.py`
-- [ ] Linting passes: `uv run ruff check src/ralph/dolt.py`
-- [ ] Imports work: `python -c "from ralph.dolt import DoltClient"`
+- [x] Type checking passes: `uv run basedpyright src/ralph/dolt.py`
+- [x] Linting passes: `uv run ruff check src/ralph/dolt.py`
+- [x] Imports work: `python -c "from ralph.dolt import DoltClient"`
 
 #### Manual Verification
 - [ ] CRUD operations work against Dolt database (test with curl or Python script)
@@ -794,9 +794,9 @@ __all__ = [
 ### Success Criteria
 
 #### Automated Verification
-- [ ] Type checking passes: `uv run basedpyright src/ralph/background/`
-- [ ] Linting passes: `uv run ruff check src/ralph/background/`
-- [ ] Imports work: `python -c "from ralph.background import get_registry, BackgroundTask"`
+- [x] Type checking passes: `uv run basedpyright src/ralph/background/`
+- [x] Linting passes: `uv run ruff check src/ralph/background/`
+- [x] Imports work: `python -c "from ralph.background import get_registry, BackgroundTask"`
 
 #### Manual Verification
 - [ ] Registry loads tasks from database on initialization
@@ -1185,9 +1185,9 @@ __all__ = [
 ### Success Criteria
 
 #### Automated Verification
-- [ ] Type checking passes: `uv run basedpyright src/ralph/background/`
-- [ ] Linting passes: `uv run ruff check src/ralph/background/`
-- [ ] Imports work: `python -c "from ralph.background import BackgroundExecutor"`
+- [x] Type checking passes: `uv run basedpyright src/ralph/background/`
+- [x] Linting passes: `uv run ruff check src/ralph/background/`
+- [x] Imports work: `python -c "from ralph.background import BackgroundExecutor"`
 
 #### Manual Verification
 - [ ] Executor can run a task for a single user
@@ -1483,9 +1483,9 @@ __all__ = [
 ### Success Criteria
 
 #### Automated Verification
-- [ ] Type checking passes: `uv run basedpyright src/ralph/`
-- [ ] Linting passes: `uv run ruff check src/ralph/`
-- [ ] Dependencies install: `uv sync`
+- [x] Type checking passes: `uv run basedpyright src/ralph/`
+- [x] Linting passes: `uv run ruff check src/ralph/`
+- [x] Dependencies install: `uv sync`
 - [ ] Server starts: `uv run ralph-server` (check logs for scheduler startup)
 
 #### Manual Verification
@@ -1836,8 +1836,8 @@ from datetime import datetime
 ### Success Criteria
 
 #### Automated Verification
-- [ ] Type checking passes: `make check-agent`
-- [ ] Linting passes: `uv run ruff check src/ralph/`
+- [x] Type checking passes: `make check-agent`
+- [x] Linting passes: `uv run ruff check src/ralph/`
 - [ ] Server starts: `uv run ralph-server`
 
 #### Manual Verification

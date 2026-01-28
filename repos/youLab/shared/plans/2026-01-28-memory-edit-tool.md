@@ -349,9 +349,9 @@ Note: `MemoryBlockTools` gets `user_id` via Agno's `RunContext` injection (same 
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Linting passes: `make lint-fix && make check-agent`
-- [ ] Type checking passes: `uv run basedpyright src/ralph/`
-- [ ] Unit tests pass (Phase 2)
+- [x] Linting passes: `make lint-fix && make check-agent`
+- [x] Type checking passes: `uv run basedpyright src/ralph/`
+- [x] Unit tests pass (Phase 2)
 
 #### Manual Verification:
 - [ ] Agent can call `list_memory_blocks` and see available blocks
@@ -700,11 +700,11 @@ class TestProposeMemoryEdit:
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] All tests pass: `uv run pytest tests/ralph/tools/test_memory_blocks.py -v`
-- [ ] Coverage is reasonable for the new code
+- [x] All tests pass: `uv run pytest tests/ralph/tools/test_memory_blocks.py -v`
+- [x] Coverage is reasonable for the new code
 
 #### Manual Verification:
-- [ ] Tests cover all error cases from Claude Code pattern
+- [x] Tests cover all error cases from Claude Code pattern
 
 **Implementation Note**: After completing this phase, run the tests to verify everything works.
 
@@ -753,7 +753,7 @@ Always be helpful, encouraging, and focused on the student's learning goals."""
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `make check-agent` passes
+- [x] `make check-agent` passes
 
 #### Manual Verification:
 - [ ] Agent receives helpful guidance about memory tools in its instructions
