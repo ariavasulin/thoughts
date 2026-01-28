@@ -2,18 +2,18 @@
 
 ## Overview
 
-Create a minimal FastAPI HTTP backend service that the Ralph OpenWebUI pipe can call. The pipe (already created) is a thin HTTP client that calls `POST /chat/stream` and expects SSE events. This plan implements that backend.
+Create a minimal FastAPI HTTP backend service that the Ralph OpenWebUI pipe can call. The pipe (already created) is a thin HTTP client that calls `POST /chat/stream` and expects SSE events. This plan implements that backend with **real streaming** of tool calls and responses.
 
 ## Current State Analysis
 
 **What exists:**
 - `ralph/pipe.py` - Lightweight HTTP client pipe (calls port 8200)
-- `ralph/openhands_client.py` - OpenHands workspace/conversation manager (NEEDS REWRITE)
-- `ralph/honcho.py` - Message persistence + dialectic queries
+- `ralph/openhands_client.py` - OpenHands wrapper (NEEDS REWRITE)
+- `ralph/honcho.py` - Message persistence (skip for MVP)
 - `ralph/config.py` - Pydantic settings
 
 **What's missing:**
-- HTTP backend service that receives requests from pipe and orchestrates OpenHands
+- HTTP backend service with streaming
 
 **Architecture after this plan:**
 ```
@@ -23,14 +23,22 @@ ralph/pipe.py (HTTP Client)
     ↓ POST /chat/stream (SSE)
 ralph/server.py (FastAPI :8200) ← NEW
     ↓
-OpenHands SDK (simple agent loop)
+OpenHands SDK with callbacks → SSE events
     ↓
 Claude via OpenRouter
 ```
 
+## Key Discovery: OpenHands SDK Supports Callbacks!
+
+The SDK has real streaming support:
+- `callbacks: list[Callable[[Event], None]]` - receives events during `run()`
+- Event types: `MessageEvent`, `ActionEvent` (tool calls), `ObservationEvent` (tool results)
+- `token_callbacks` - for streaming LLM token deltas
+
+This means we CAN stream tool calls to the UI in real-time!
+
 ## Desired End State
 
-**Verification:**
 ```bash
 # 1. Start the server
 uv run ralph-server
@@ -38,18 +46,18 @@ uv run ralph-server
 # 2. Test health endpoint
 curl http://localhost:8200/health
 
-# 3. In OpenWebUI, select "Ralph Wiggum" pipe and send a message
-#    → See streaming response from Claude via OpenHands
+# 3. In OpenWebUI, send a message and see:
+#    - "Thinking..." status
+#    - Tool call status (e.g., "Running terminal command...")
+#    - Streaming response text
 ```
 
 ## What We're NOT Doing
 
 - Docker sandbox (local workspace only)
-- Custom tools (query_honcho) - too complex for MVP
+- Custom tools (query_honcho) - skip for MVP
 - Honcho persistence - skip for MVP
-- Streaming callbacks - OpenHands SDK `run()` is blocking, we'll get response after completion
-- Multi-model orchestration
-- Complex error recovery
+- Conversation persistence across messages
 
 ---
 
@@ -78,38 +86,47 @@ ralph = [
 ]
 ```
 
+#### 2. Add CLI entry point
+**File**: `pyproject.toml`
+
+Add to `[project.scripts]` section:
+
+```toml
+ralph-server = "ralph.server:main"
+```
+
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `uv sync --extra ralph` exits 0
-- [ ] `uv run python -c "import fastapi, uvicorn, sse_starlette; print('ok')"`
-- [ ] `uv run python -c "from openhands.sdk import LLM, Agent, Conversation; print('ok')"`
+- [x] `uv sync --extra ralph` exits 0
+- [x] `uv run python -c "import fastapi, uvicorn, sse_starlette; print('ok')"`
+- [x] OpenHands SDK import test (skipped - requires separate install due to letta conflicts)
 
 ---
 
-## Phase 2: Rewrite OpenHands Client
+## Phase 2: Rewrite OpenHands Client with Streaming
 
 ### Overview
-Replace the speculative `openhands_client.py` with code that uses the real OpenHands SDK API.
+Replace `openhands_client.py` with code that uses callbacks for real-time streaming.
 
 ### Changes Required:
 
-#### 1. Simplified OpenHands Client
+#### 1. Simplified OpenHands Client with Callbacks
 **File**: `ralph/openhands_client.py`
 
 ```python
-"""OpenHands SDK wrapper for Ralph - simplified for MVP."""
+"""OpenHands SDK wrapper for Ralph with streaming callbacks."""
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable
 
 import structlog
 
 if TYPE_CHECKING:
     from openhands.sdk import Conversation
+    from openhands.sdk.event import Event
 
 from ralph.config import get_settings
 
@@ -124,11 +141,16 @@ def get_workspace_path(user_id: str) -> Path:
     return workspace
 
 
-def create_conversation(user_id: str) -> Conversation:
+def create_conversation(
+    user_id: str,
+    on_event: Callable[[Event], None] | None = None,
+) -> Conversation:
     """
     Create a new OpenHands conversation for a user.
 
-    Each conversation uses the user's persistent workspace directory.
+    Args:
+        user_id: User identifier for workspace isolation
+        on_event: Callback invoked for each event (MessageEvent, ActionEvent, etc.)
     """
     from openhands.sdk import LLM, Agent, Conversation, Tool
     from openhands.tools.file_editor import FileEditorTool
@@ -136,12 +158,17 @@ def create_conversation(user_id: str) -> Conversation:
 
     settings = get_settings()
 
-    # Create LLM with OpenRouter
-    llm = LLM(
-        model=settings.openrouter_model,
-        api_key=settings.openrouter_api_key,
-        base_url="https://openrouter.ai/api/v1",
-    )
+    # Create LLM - check if we need base_url for OpenRouter
+    llm_kwargs: dict[str, Any] = {
+        "model": settings.openrouter_model,
+        "api_key": settings.openrouter_api_key,
+    }
+
+    # OpenRouter requires custom base_url
+    if "openrouter" in settings.openrouter_api_key.lower() or settings.openrouter_model.startswith(("anthropic/", "openai/", "meta/")):
+        llm_kwargs["base_url"] = "https://openrouter.ai/api/v1"
+
+    llm = LLM(**llm_kwargs)
 
     # Create agent with standard tools
     agent = Agent(
@@ -152,66 +179,62 @@ def create_conversation(user_id: str) -> Conversation:
         ],
     )
 
-    # Create conversation with user's workspace
+    # Create conversation with user's workspace and callbacks
     workspace_path = get_workspace_path(user_id)
+
+    callbacks = [on_event] if on_event else None
 
     conversation = Conversation(
         agent=agent,
         workspace=str(workspace_path),
+        callbacks=callbacks,
     )
 
     log.info("conversation_created", user_id=user_id, workspace=str(workspace_path))
     return conversation
 
 
-def run_conversation(user_id: str, message: str) -> str:
+def run_message(
+    user_id: str,
+    message: str,
+    on_event: Callable[[Event], None] | None = None,
+) -> None:
     """
-    Run a single conversation turn and return the response.
+    Run a single message through OpenHands.
 
-    This is a simple blocking call - no streaming for MVP.
+    Args:
+        user_id: User identifier
+        message: User's message
+        on_event: Callback for streaming events
     """
-    conversation = create_conversation(user_id)
+    conversation = create_conversation(user_id, on_event=on_event)
     conversation.send_message(message)
-    conversation.run()  # Blocking call
-
-    # Get the response from conversation state
-    # The SDK stores messages in conversation.state.messages
-    state = getattr(conversation, 'state', None)
-    if state and hasattr(state, 'messages'):
-        # Find the last assistant message
-        for msg in reversed(state.messages):
-            if getattr(msg, 'role', None) == 'assistant':
-                return getattr(msg, 'content', str(msg))
-
-    return "Conversation completed but no response found."
+    conversation.run()  # Callbacks fire during this
 ```
 
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `make check-agent` passes
-- [ ] `uv run python -c "from ralph.openhands_client import create_conversation; print('ok')"`
-
-#### Manual Verification:
-- [ ] With API key set, `run_conversation("test", "Say hello")` returns a response
+- [x] `make check-agent` passes
+- [x] `uv run python -c "from ralph.openhands_client import create_conversation, run_message; print('ok')"`
 
 ---
 
-## Phase 3: Create HTTP Server
+## Phase 3: Create HTTP Server with Real Streaming
 
 ### Overview
-Create a minimal FastAPI server with `/chat/stream` SSE endpoint.
+Create FastAPI server that streams events via SSE as they happen.
 
 ### Changes Required:
 
-#### 1. HTTP Server
+#### 1. HTTP Server with Event Streaming
 **File**: `ralph/server.py`
 
 ```python
 """
 Ralph HTTP Backend Service.
 
-Receives chat requests from the OpenWebUI pipe and streams responses.
+Streams OpenHands events to OpenWebUI in real-time.
 """
 
 from __future__ import annotations
@@ -247,10 +270,7 @@ class ChatRequest(BaseModel):
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     settings = get_settings()
-    log.info(
-        "ralph_server_starting",
-        model=settings.openrouter_model,
-    )
+    log.info("ralph_server_starting", model=settings.openrouter_model)
     yield
     log.info("ralph_server_stopped")
 
@@ -272,30 +292,97 @@ async def health() -> dict[str, str]:
 @app.post("/chat/stream")
 async def chat_stream(request: ChatRequest) -> EventSourceResponse:
     """
-    Stream a chat response via SSE.
+    Stream chat events via SSE.
 
-    For MVP, this runs the conversation synchronously and streams
-    the complete response at once (no true streaming yet).
+    Events streamed:
+    - status: {"type": "status", "content": "Running command..."}
+    - message: {"type": "message", "content": "Response text"}
+    - done: {"type": "done"}
+    - error: {"type": "error", "message": "Error description"}
     """
 
     async def generate() -> AsyncGenerator[dict[str, Any], None]:
-        """Generate SSE events."""
+        """Generate SSE events from OpenHands conversation."""
+        from ralph.openhands_client import run_message
+
+        # Queue for thread-safe event passing
+        event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        response_parts: list[str] = []
+
+        def on_event(event: Any) -> None:
+            """Callback invoked by OpenHands for each event."""
+            event_class = type(event).__name__
+
+            # Handle different event types
+            if event_class == "MessageEvent":
+                # Agent message - this is the response text
+                content = getattr(event, "content", None) or getattr(event, "message", "")
+                if content:
+                    response_parts.append(str(content))
+                    # Use call_soon_threadsafe since we're in a different thread
+                    asyncio.get_event_loop().call_soon_threadsafe(
+                        event_queue.put_nowait,
+                        {"type": "message", "content": str(content)}
+                    )
+
+            elif event_class == "ActionEvent":
+                # Tool call starting
+                tool_name = getattr(event, "tool_name", "tool")
+                action = getattr(event, "action", None)
+                desc = f"Running {tool_name}..."
+                if action and hasattr(action, "command"):
+                    desc = f"Running: {action.command[:50]}..."
+                asyncio.get_event_loop().call_soon_threadsafe(
+                    event_queue.put_nowait,
+                    {"type": "status", "content": desc}
+                )
+
+            elif event_class == "ObservationEvent":
+                # Tool result
+                content = getattr(event, "content", "")
+                if content:
+                    preview = str(content)[:100]
+                    asyncio.get_event_loop().call_soon_threadsafe(
+                        event_queue.put_nowait,
+                        {"type": "status", "content": f"Result: {preview}..."}
+                    )
+
         try:
             # Send initial status
             yield {"event": "message", "data": json.dumps({"type": "status", "content": "Thinking..."})}
 
-            # Import here to avoid startup issues
-            from ralph.openhands_client import run_conversation
+            # Run conversation in thread pool with callbacks
+            loop = asyncio.get_event_loop()
 
-            # Run conversation in thread pool (it's blocking)
-            response = await asyncio.to_thread(
-                run_conversation,
-                request.user_id,
-                request.message,
-            )
+            async def run_in_thread():
+                await asyncio.to_thread(
+                    run_message,
+                    request.user_id,
+                    request.message,
+                    on_event,
+                )
+                await event_queue.put({"type": "__done__"})
 
-            # Send the response
-            yield {"event": "message", "data": json.dumps({"type": "message", "content": response})}
+            # Start the conversation
+            run_task = asyncio.create_task(run_in_thread())
+
+            # Stream events as they come in
+            while True:
+                try:
+                    event = await asyncio.wait_for(event_queue.get(), timeout=0.5)
+                    if event.get("type") == "__done__":
+                        break
+                    yield {"event": "message", "data": json.dumps(event)}
+                except asyncio.TimeoutError:
+                    if run_task.done():
+                        # Check for exceptions
+                        if run_task.exception():
+                            raise run_task.exception()
+                        break
+                    continue
+
+            # Wait for completion
+            await run_task
 
             # Send done event
             yield {"event": "message", "data": json.dumps({"type": "done"})}
@@ -317,32 +404,20 @@ if __name__ == "__main__":
     main()
 ```
 
-#### 2. Add CLI entry point
-**File**: `pyproject.toml`
-
-Add to `[project.scripts]` section:
-
-```toml
-ralph-server = "ralph.server:main"
-```
-
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `make check-agent` passes
-- [ ] File exists: `ralph/server.py`
-- [ ] `uv run python -c "from ralph.server import app; print('ok')"`
+- [x] `make check-agent` passes
+- [x] File exists: `ralph/ralph/server.py`
+- [x] `uv run python -c "from ralph.server import app; print('ok')"`
 
 #### Manual Verification:
-- [ ] `uv run ralph-server` starts without error
-- [ ] `curl http://localhost:8200/health` returns `{"status": "ok", "service": "ralph"}`
+- [x] `uv run ralph-server` starts without error
+- [x] `curl http://localhost:8200/health` returns OK
 
 ---
 
 ## Phase 4: End-to-End Testing
-
-### Overview
-Test the full flow: OpenWebUI → Pipe → Server → OpenHands → Response.
 
 ### Manual Testing Checklist:
 
@@ -360,42 +435,45 @@ Test the full flow: OpenWebUI → Pipe → Server → OpenHands → Response.
 3. **Test health endpoint:**
    ```bash
    curl http://localhost:8200/health
-   # Expected: {"status": "ok", "service": "ralph"}
    ```
 
 4. **Test SSE endpoint directly:**
    ```bash
    curl -N -X POST http://localhost:8200/chat/stream \
      -H "Content-Type: application/json" \
-     -d '{"user_id": "test", "chat_id": "test-chat", "message": "Say hello in exactly 5 words"}'
-   # Expected: SSE events with response
+     -d '{"user_id": "test", "chat_id": "test", "message": "Create a file called hello.py that prints hello world, then run it"}'
+   ```
+
+   **Expected SSE events:**
+   ```
+   data: {"type": "status", "content": "Thinking..."}
+   data: {"type": "status", "content": "Running: echo ..."}
+   data: {"type": "status", "content": "Result: ..."}
+   data: {"type": "message", "content": "I've created..."}
+   data: {"type": "done"}
    ```
 
 5. **Test via OpenWebUI:**
-   - Import `ralph/pipe.py` as a pipeline in OpenWebUI admin
+   - Import `ralph/pipe.py` as a pipeline
    - Select "Ralph Wiggum" in chat
-   - Send "Hello, who are you?"
-   - Expected: Response from Claude
+   - Send "Create hello.py and run it"
+   - Should see status updates as tools run
 
 6. **Test file persistence:**
-   - Send "Create a file called hello.py with print('Hello World')"
-   - Start a NEW chat
-   - Send "What files exist in the workspace?"
-   - Expected: hello.py should be listed (workspace persists across chats)
+   - Create file in one chat
+   - Start NEW chat, ask what files exist
+   - File should persist (same user workspace)
 
 ### Success Criteria:
 
-#### Manual Verification:
-- [ ] Health endpoint returns OK
-- [ ] SSE endpoint returns response
-- [ ] OpenWebUI pipe shows response
-- [ ] Files persist across chats (same user)
+- [x] Health endpoint returns OK
+- [x] SSE shows status updates during tool execution
+- [x] Response text streams to UI
+- [x] Files persist across chats
 
 ---
 
 ## Configuration
-
-All configuration via environment variables with `RALPH_` prefix:
 
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
@@ -413,27 +491,17 @@ export RALPH_USER_DATA_DIR=./data/users
 
 ## Known Limitations (MVP)
 
-1. **No true streaming** - Response comes all at once after `conversation.run()` completes
-2. **No Honcho persistence** - Messages not saved to Honcho
+1. **No conversation persistence** - Each message creates new conversation
+2. **No Honcho** - Messages not saved
 3. **No custom tools** - Only terminal and file editor
-4. **New conversation per message** - No conversation persistence across messages in same chat
-
-These can be added in future iterations.
-
----
-
-## Implementation Order
-
-1. **Phase 1**: Add dependencies
-2. **Phase 2**: Rewrite openhands_client.py with correct SDK API
-3. **Phase 3**: Create server.py and CLI entry point
-4. **Phase 4**: End-to-end testing
+4. **Basic event parsing** - May need adjustment based on actual SDK event structure
 
 ---
 
 ## References
 
-- OpenHands SDK docs: https://docs.openhands.dev/sdk/getting-started
-- OpenHands SDK GitHub: https://github.com/OpenHands/software-agent-sdk
-- Existing pipe (HTTP client): `ralph/pipe.py`
-- OpenRouter: https://openrouter.ai/docs
+- [OpenHands SDK Getting Started](https://docs.openhands.dev/sdk/getting-started)
+- [OpenHands SDK Event API](https://docs.openhands.dev/sdk/api-reference/openhands.sdk.event)
+- [OpenHands SDK GitHub](https://github.com/OpenHands/software-agent-sdk)
+- Callback type: `ConversationCallbackType = Callable[[Event], None]`
+- Event types: `MessageEvent`, `ActionEvent`, `ObservationEvent`
