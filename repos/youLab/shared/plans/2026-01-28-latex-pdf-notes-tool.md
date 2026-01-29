@@ -475,9 +475,9 @@ __all__ = ["HonchoTools", "LaTeXTools", "MemoryBlockTools", "QueryHonchoTool"]
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] Type checking passes: `uv run basedpyright src/ralph/tools/latex_tools.py`
-- [ ] Linting passes: `uv run ruff check src/ralph/tools/latex_tools.py`
-- [ ] Module imports correctly: `python -c "from ralph.tools import LaTeXTools"`
+- [x] Type checking passes: `uv run basedpyright src/ralph/tools/latex_tools.py`
+- [x] Linting passes: `uv run ruff check src/ralph/tools/latex_tools.py`
+- [x] Module imports correctly: `python -c "from ralph.tools import LaTeXTools"`
 
 #### Manual Verification:
 - [ ] Tool can be instantiated with a workspace path
@@ -561,9 +561,9 @@ Use this tool proactively when students would benefit from well-organized notes.
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] Server starts without errors: `timeout 5 uv run ralph-server || true` (expect timeout, no crash)
-- [ ] Type checking passes: `uv run basedpyright src/ralph/server.py`
-- [ ] Linting passes: `uv run ruff check src/ralph/server.py`
+- [x] Server starts without errors: `timeout 5 uv run ralph-server || true` (expect timeout, no crash)
+- [x] Type checking passes: `uv run basedpyright src/ralph/server.py`
+- [x] Linting passes: `uv run ruff check src/ralph/server.py`
 
 #### Manual Verification:
 - [ ] Agent recognizes the `render_notes` tool in chat
@@ -621,8 +621,8 @@ cargo install tectonic           # Cross-platform via Rust
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] Tectonic is in PATH: `which tectonic`
-- [ ] Tectonic can compile: `echo '\documentclass{article}\begin{document}Hello\end{document}' > /tmp/test.tex && tectonic /tmp/test.tex && ls /tmp/test.pdf`
+- [x] Tectonic is in PATH: `which tectonic`
+- [x] Tectonic can compile: `echo '\documentclass{article}\begin{document}Hello\end{document}' > /tmp/test.tex && tectonic /tmp/test.tex && ls /tmp/test.pdf`
 
 #### Manual Verification:
 - [ ] PDF compilation works end-to-end through the agent
