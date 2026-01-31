@@ -61,10 +61,103 @@ The implementation follows this dependency chain:
 
 ---
 
+## Phase 0: PostgreSQL Migration for OpenWebUI
+
+### Overview
+Migrate OpenWebUI from SQLite (default) to PostgreSQL. This enables Ralph to directly insert chat records for module thread creation, as the OpenWebUI API doesn't support creating chats on behalf of other users.
+
+### Why This Is Needed
+- OpenWebUI's `/api/chats/new` endpoint creates chats for the authenticated user only
+- No admin impersonation or `user_id` override capability exists
+- Direct database insertion is the recommended approach (per research)
+- SQLite doesn't handle concurrent writes well; PostgreSQL is production-ready
+
+### Changes Required:
+
+#### 1. Add PostgreSQL to Docker Compose
+**File**: `docker-compose.prod.yml`
+**Changes**: Add PostgreSQL service, configure OpenWebUI to use it
+
+```yaml
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: youlab-postgres
+    environment:
+      POSTGRES_USER: youlab
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devpassword}
+      POSTGRES_DB: openwebui
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - youlab
+
+  openwebui:
+    # ... existing config ...
+    environment:
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:-please-change-me-in-production}
+      - DATABASE_URL=postgresql://youlab:${POSTGRES_PASSWORD:-devpassword}@postgres:5432/openwebui
+      - ENABLE_SIGNUP=true  # Enable for webhook testing
+      - WEBHOOK_URL=http://ralph:8200/webhook/user-signup
+    depends_on:
+      postgres:
+        condition: service_started
+      ralph:
+        condition: service_healthy
+
+  ralph:
+    # ... existing config ...
+    environment:
+      # ... existing env vars ...
+      - RALPH_OPENWEBUI_DATABASE_URL=postgresql://youlab:${POSTGRES_PASSWORD:-devpassword}@postgres:5432/openwebui
+
+volumes:
+  postgres_data:
+  # ... other volumes ...
+```
+
+#### 2. Configuration Updates
+**File**: `src/ralph/config.py`
+**Changes**: Add OpenWebUI database connection
+
+```python
+# Add to Settings class
+openwebui_database_url: str = ""  # PostgreSQL connection string
+
+# Environment variable:
+# RALPH_OPENWEBUI_DATABASE_URL
+```
+
+#### 3. Data Migration (if existing data)
+If there's existing data in SQLite that needs to be preserved:
+
+```bash
+# Export from SQLite
+docker exec youlab-openwebui sqlite3 /app/backend/data/webui.db .dump > openwebui_backup.sql
+
+# Import to PostgreSQL (after converting syntax if needed)
+docker exec -i youlab-postgres psql -U youlab openwebui < openwebui_backup.sql
+```
+
+### Success Criteria:
+
+#### Automated Verification:
+- [ ] PostgreSQL container starts: `docker compose -f docker-compose.prod.yml ps`
+- [ ] OpenWebUI connects to PostgreSQL: check logs for database connection
+- [ ] Tables created: `docker exec youlab-postgres psql -U youlab -d openwebui -c "\dt"`
+
+#### Manual Verification:
+- [ ] OpenWebUI UI loads correctly
+- [ ] Can create a user and chat via UI
+- [ ] Chat data visible in PostgreSQL: `SELECT * FROM chat LIMIT 5;`
+
+---
+
 ## Phase 1: Database Schema & Configuration
 
 ### Overview
-Add Dolt tables for course enrollment and module-thread mapping. Add configuration for OpenWebUI API access.
+Add Dolt tables for course enrollment and module-thread mapping. Add Ralph's OpenWebUI database client for direct chat insertion.
 
 ### Changes Required:
 
@@ -267,83 +360,142 @@ def get_course_loader() -> CourseLoader:
 ## Phase 3: Enrollment API & Thread Creation
 
 ### Overview
-Add webhook endpoint that receives user signup events, creates module threads via OpenWebUI API, and stores mappings in Dolt.
+Add webhook endpoint that receives user signup events, creates module threads via **direct PostgreSQL insertion** (bypassing OpenWebUI API), and stores mappings in Dolt.
+
+### Why Direct Database Insertion?
+Per research (`thoughts/shared/research/2026-01-30-openwebui-chat-creation-api.md`):
+- OpenWebUI's `/api/chats/new` creates chats for the authenticated user only
+- No `user_id` override or admin impersonation capability exists
+- Direct DB insertion is the recommended approach - simple, immediate, no OpenWebUI modifications
 
 ### Changes Required:
 
-#### 1. OpenWebUI API Client
-**File**: `src/ralph/openwebui.py` (new file)
-**Changes**: Client for OpenWebUI chat management API
+#### 1. OpenWebUI Database Client
+**File**: `src/ralph/openwebui_db.py` (new file)
+**Changes**: Direct PostgreSQL client for chat creation
 
 ```python
-import httpx
+import uuid
+import time
+import json
+from databases import Database
 from ralph.config import settings
 
-class OpenWebUIClient:
-    """Client for OpenWebUI API operations."""
+class OpenWebUIDatabase:
+    """Direct database client for OpenWebUI operations."""
 
     def __init__(self):
-        self.base_url = settings.openwebui_base_url
-        self.api_key = settings.openwebui_admin_api_key
+        self.database_url = settings.openwebui_database_url
+        self._db: Database | None = None
 
-    async def create_chat(
+    async def connect(self):
+        if self._db is None:
+            self._db = Database(self.database_url)
+            await self._db.connect()
+
+    async def disconnect(self):
+        if self._db:
+            await self._db.disconnect()
+            self._db = None
+
+    async def create_chat_for_user(
         self,
         user_id: str,
         title: str,
-        model: str,
-        initial_message: str | None = None,
+        first_message: str | None = None,
     ) -> str:
-        """Create a new chat and return its ID."""
-        # POST /api/chats/new
-        # Returns chat object with id
-        ...
+        """
+        Create a new chat owned by the specified user.
 
-    async def archive_chat(self, chat_id: str) -> None:
-        """Archive a chat (hide from sidebar)."""
-        # POST /api/chats/{id}/archive
-        ...
+        Inserts directly into OpenWebUI's chat table, bypassing the API.
+        Chat is created with archived=True so it's hidden from Chats sidebar.
+        """
+        await self.connect()
 
-    async def create_and_archive_module_thread(
-        self,
-        user_id: str,
-        module_name: str,
-        model: str,
-        first_message: str,
-    ) -> str:
-        """Create a module thread, inject first message, archive it."""
-        chat_id = await self.create_chat(
-            user_id=user_id,
-            title=module_name,
-            model=model,
-            initial_message=first_message,
+        chat_id = str(uuid.uuid4())
+        now = int(time.time())
+
+        # Build chat JSON structure matching OpenWebUI format
+        chat_data = {
+            "title": title,
+            "models": ["ralph-wiggum"],
+            "messages": [],
+            "history": {
+                "messages": {},
+                "currentId": None
+            },
+            "tags": [],
+            "params": {},
+        }
+
+        # Add first message if provided (as assistant message)
+        if first_message:
+            msg_id = str(uuid.uuid4())
+            chat_data["messages"] = [
+                {
+                    "id": msg_id,
+                    "parentId": None,
+                    "childrenIds": [],
+                    "role": "assistant",
+                    "content": first_message,
+                    "timestamp": now,
+                }
+            ]
+            chat_data["history"]["messages"][msg_id] = {
+                "id": msg_id,
+                "parentId": None,
+                "childrenIds": [],
+                "role": "assistant",
+                "content": first_message,
+            }
+            chat_data["history"]["currentId"] = msg_id
+
+        # Insert into OpenWebUI's chat table
+        await self._db.execute(
+            """
+            INSERT INTO chat (id, user_id, title, chat, created_at, updated_at, archived, meta)
+            VALUES (:id, :user_id, :title, :chat, :created_at, :updated_at, :archived, :meta)
+            """,
+            {
+                "id": chat_id,
+                "user_id": user_id,
+                "title": title,
+                "chat": json.dumps(chat_data),
+                "created_at": now,
+                "updated_at": now,
+                "archived": True,  # Hidden from Chats sidebar
+                "meta": json.dumps({"module": True}),  # Tag as module thread
+            }
         )
-        await self.archive_chat(chat_id)
+
         return chat_id
+
+
+# Singleton instance
+_openwebui_db: OpenWebUIDatabase | None = None
+
+async def get_openwebui_db() -> OpenWebUIDatabase:
+    global _openwebui_db
+    if _openwebui_db is None:
+        _openwebui_db = OpenWebUIDatabase()
+    return _openwebui_db
 ```
-
-**Note**: The OpenWebUI API requires the request to be made on behalf of a user. We may need to:
-- Use admin impersonation if supported, OR
-- Pass user token through the webhook payload (requires OpenWebUI modification), OR
-- Create chats as admin and transfer ownership
-
-Research needed on exact API behavior for creating chats for other users.
 
 #### 2. Enrollment Service
 **File**: `src/ralph/enrollment.py` (new file)
-**Changes**: Enrollment logic
+**Changes**: Enrollment logic using direct database insertion
 
 ```python
 from ralph.curriculum.loader import get_course_loader
+from ralph.curriculum.schema import CourseConfig, ModuleConfig
 from ralph.dolt import get_dolt_client
-from ralph.openwebui import OpenWebUIClient
+from ralph.openwebui_db import get_openwebui_db
 
 class EnrollmentService:
     """Handles user enrollment in courses."""
 
     def __init__(self):
         self.loader = get_course_loader()
-        self.dolt = get_dolt_client()
-        self.openwebui = OpenWebUIClient()
 
     async def enroll_user(self, user_id: str, course_id: str = "welcome") -> dict:
         """
@@ -351,38 +503,63 @@ class EnrollmentService:
 
         1. Check if already enrolled
         2. Load course config
-        3. Create thread for each module
-        4. Archive threads
-        5. Initialize memory blocks from templates
-        6. Store enrollment in Dolt
+        3. Create thread for each module (direct DB insert, archived)
+        4. Initialize memory blocks from templates
+        5. Store enrollment in Dolt
 
         Returns dict with module_id -> thread_id mapping.
         """
-        ...
+        dolt = await get_dolt_client()
 
-    async def _create_module_thread(
-        self,
-        user_id: str,
-        course: CourseConfig,
-        module: ModuleConfig,
-    ) -> str:
-        """Create and archive a thread for a module."""
-        first_message = course.first_message.content if course.first_message else ""
+        # Check if already enrolled
+        if await dolt.is_user_enrolled(user_id, course_id):
+            return {"status": "already_enrolled"}
 
-        thread_id = await self.openwebui.create_and_archive_module_thread(
-            user_id=user_id,
-            module_name=module.name,
-            model="ralph-wiggum",  # The pipe model ID
-            first_message=first_message,
-        )
-        return thread_id
+        # Load course config
+        course = self.loader.load(course_id)
 
-    async def _initialize_blocks(self, user_id: str, course: CourseConfig) -> None:
+        # For single-module courses like Welcome, create one module entry
+        # matching the course itself
+        modules = course.modules if course.modules else [
+            ModuleConfig(id=course_id, name=course.agent.name, order=0)
+        ]
+
+        # Create threads and store mappings
+        openwebui_db = await get_openwebui_db()
+        module_threads = {}
+
+        for module in modules:
+            first_message = course.first_message.content if course.first_message else ""
+
+            thread_id = await openwebui_db.create_chat_for_user(
+                user_id=user_id,
+                title=module.name,
+                first_message=first_message,
+            )
+
+            await dolt.create_user_module(
+                user_id=user_id,
+                course_id=course_id,
+                module_id=module.id,
+                thread_id=thread_id,
+            )
+
+            module_threads[module.id] = thread_id
+
+        # Initialize memory blocks from templates
+        await self._initialize_blocks(user_id, course, dolt)
+
+        # Record enrollment
+        await dolt.enroll_user_in_course(user_id, course_id)
+
+        return {"status": "enrolled", "modules": module_threads}
+
+    async def _initialize_blocks(self, user_id: str, course: CourseConfig, dolt) -> None:
         """Initialize memory blocks from course templates."""
         for block in course.blocks:
-            existing = await self.dolt.get_memory_block(user_id, block.label)
+            existing = await dolt.get_memory_block(user_id, block.label)
             if existing is None:
-                await self.dolt.upsert_memory_block(
+                await dolt.upsert_memory_block(
                     user_id=user_id,
                     label=block.label,
                     title=block.title,
@@ -449,7 +626,7 @@ WEBHOOK_URL=http://ralph-server:8200/webhook/user-signup
 - [ ] Verify `user_courses` and `user_modules` rows created in Dolt
 - [ ] Verify memory blocks initialized with templates
 
-**Implementation Note**: This phase has the most uncertainty around OpenWebUI API behavior. May need to iterate on how threads are created for users.
+**Implementation Note**: Direct database insertion avoids OpenWebUI API limitations. The main risk is schema drift if OpenWebUI updates its chat table structure - monitor during upgrades.
 
 ---
 
