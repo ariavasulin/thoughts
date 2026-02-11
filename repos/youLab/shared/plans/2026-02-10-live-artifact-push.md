@@ -198,7 +198,7 @@ const chatEventHandler = async (event, cb) => {
 
 #### Automated Verification:
 - [ ] OpenWebUI builds without errors: `cd OpenWebUI/open-webui && npm run build`
-- [ ] OpenWebUI backend starts without import errors
+- [x] OpenWebUI backend starts without import errors
 - [ ] `curl -X POST http://localhost:8080/api/artifact/push -H "Authorization: Bearer sk-..." -H "Content-Type: application/json" -d '{"user_id": "...", "content": "<html><body><h1>Test</h1></body></html>"}'` returns `{"status": "ok"}`
 
 #### Manual Verification:
@@ -375,11 +375,11 @@ async def _push_artifact(
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `uv run ruff check src/ralph/artifacts.py` passes
-- [ ] `uv run basedpyright src/ralph/artifacts.py` passes
+- [x] `uv run ruff check src/ralph/artifacts.py` passes
+- [x] `uv run basedpyright src/ralph/artifacts.py` passes
 - [ ] Unit test: `_compile_latex` on a valid .tex file returns bytes
 - [ ] Unit test: `_build_viewer` returns HTML string containing the base64 data
-- [ ] `make check-agent` passes
+- [x] `make check-agent` passes (pre-existing TC003 in background.py only)
 
 #### Manual Verification:
 - [ ] `await compile_and_push(Path("test.tex"), user_id)` from a Python shell compiles and pushes successfully
@@ -578,10 +578,10 @@ Remove `LaTeXTools` export (if present), add `HookedFileTools`.
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `uv run ruff check src/ralph/` passes
-- [ ] `uv run basedpyright src/ralph/` passes
-- [ ] `make verify-agent` passes
-- [ ] Existing tests still pass: `make test-agent`
+- [x] `uv run ruff check src/ralph/` passes (pre-existing TC003 only)
+- [x] `uv run basedpyright src/ralph/` passes
+- [x] `make verify-agent` passes (pre-existing issues only)
+- [x] Existing tests still pass: `make test-agent`
 
 #### Manual Verification:
 - [ ] Start Ralph and OpenWebUI locally
@@ -656,9 +656,9 @@ Or use a pre-built binary. Check what the current Dockerfile does and ensure tec
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `make verify-agent` passes
+- [x] `make verify-agent` passes (pre-existing TC003 only)
 - [ ] `docker compose -f docker-compose.prod.yml build ralph` succeeds
-- [ ] No references to `render_notes` or `LaTeXTools` in `server.py`
+- [x] No references to `render_notes` or `LaTeXTools` in `server.py`
 
 #### Manual Verification:
 - [ ] Full end-to-end test in production Docker compose
