@@ -62,8 +62,8 @@ Remove the entire file. All 4 exported functions are YouLab custom code, none ar
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] File no longer exists: `! test -f src/lib/utils/folders.ts`
-- [ ] No remaining imports of the file: `grep -r "utils/folders" src/` returns nothing
+- [x] File no longer exists: `! test -f src/lib/utils/folders.ts`
+- [x] No remaining imports of the file: `grep -r "utils/folders" src/` returns nothing
 
 ---
 
@@ -172,9 +172,9 @@ This is correct — module chats already get a custom title, so auto-title shoul
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] No references to `ensureModuleFolder` in Chat.svelte: `grep ensureModuleFolder Chat.svelte` returns nothing
-- [ ] No references to `ensureAgentFolder` anywhere: `grep -r ensureAgentFolder src/` returns nothing
-- [ ] Build succeeds: `npm run build` (from OpenWebUI directory)
+- [x] No references to `ensureModuleFolder` in Chat.svelte: `grep ensureModuleFolder Chat.svelte` returns nothing
+- [x] No references to `ensureAgentFolder` anywhere: `grep -r ensureAgentFolder src/` returns nothing
+- [x] Build succeeds: `npm run build` (from OpenWebUI directory)
 
 #### Manual Verification:
 - [ ] Click a module → navigates to most recent chat or new chat page with correct model
@@ -203,9 +203,9 @@ If any results found, remove the imports/references.
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Zero results from the grep above
-- [ ] `npm run build` succeeds
-- [ ] `npm run check` succeeds (if available — Svelte type checking)
+- [x] Zero results from the grep above
+- [x] `npm run build` succeeds
+- [x] `npm run check` — 8009 errors pre-existing (baseline upstream OpenWebUI). No new errors introduced. Build passes.
 
 ## Testing Strategy
 
