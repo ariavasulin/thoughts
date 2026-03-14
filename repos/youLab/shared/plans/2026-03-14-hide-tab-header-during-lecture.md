@@ -2,28 +2,27 @@
 
 ## Overview
 
-Hide the "Controls / Files / Overview" tab bar in `ChatControls.svelte` when the Files tab is active with a terminal selected (which currently always renders the lecture video). This reclaims vertical space and reduces UI noise during lecture playback.
+Hide the entire "Controls / Files / Overview" tab bar (including close button) in `ChatControls.svelte` when the Files tab is active with a terminal selected (which currently always renders the lecture video). This reclaims vertical space and reduces UI noise during lecture playback.
 
 ## Current State Analysis
 
-The tab bar is rendered twice in `ChatControls.svelte` — once for mobile (line 292) and once for desktop (line 438). Each contains the same three conditional tab buttons plus a close (X) button. The `VideoPlayer` component is always rendered inside `FileNav.svelte:631-634` with a hardcoded `playbackId`, so whenever the Files tab is active with `$selectedTerminalId`, the video is present.
+The tab bar is rendered twice in `ChatControls.svelte` — once for mobile (line 292) and once for desktop (line 438). Each contains the same three conditional tab buttons plus a close (X) button inside a single container div. The `VideoPlayer` component is always rendered inside `FileNav.svelte:631-634` with a hardcoded `playbackId`, so whenever the Files tab is active with `$selectedTerminalId`, the video is present.
 
 ## Desired End State
 
-When `activeTab === 'files'` and a terminal is selected, the tab buttons ("Controls", "Files", "Overview") are hidden. The close (X) button remains visible so the user can still dismiss the panel. When the user switches away from the Files tab (via code or future UI), the tab bar reappears normally.
+When `activeTab === 'files'` and a terminal is selected, the entire tab bar container (buttons + close button + padding) is hidden. The video player sits flush at the top of the panel. The panel can still be closed via the pane resizer (desktop) or clicking outside the drawer (mobile).
 
-**How to verify**: Open a chat with a terminal connected, open the controls panel → the video should appear with no tab buttons above it, only the close button. If you switch to a state without a terminal, the tab bar should return.
+**How to verify**: Open a chat with a terminal connected, open the controls panel → the video should appear at the top with no tab bar above it. Without a terminal, the tab bar appears normally.
 
 ## What We're NOT Doing
 
 - No new Svelte stores
 - No changes to `VideoPlayer.svelte` or `FileNav.svelte`
 - No changes to the store layer
-- Not hiding the close (X) button
 
 ## Implementation Approach
 
-Add one reactive declaration and wrap the tab button containers in both mobile and desktop views with `{#if !hideTabBar}`.
+Add one reactive declaration and wrap the entire tab bar container div in both mobile and desktop views with `{#if !hideTabBar}`.
 
 ## Phase 1: Hide Tab Bar in ChatControls.svelte
 
@@ -41,33 +40,31 @@ Add:
 $: hideTabBar = activeTab === 'files' && !!$selectedTerminalId;
 ```
 
-#### 2. Wrap mobile tab buttons (line 293)
+#### 2. Wrap mobile tab bar container (line 292)
 **File**: `open-webui/src/lib/components/chat/ChatControls.svelte`
-**Location**: Line 293 — the `<div class="flex gap-1 ...">` containing the tab buttons
+**Location**: Line 292 — the outer `<div class="flex items-center justify-between px-2 pt-2.5 pb-2 shrink-0">` containing both the tab buttons and the close button
 
-Wrap the existing `<div class="flex gap-1 ...">...</div>` (lines 293-327) with:
+Wrap the entire container (lines 292-344) with `{#if !hideTabBar}`:
 ```svelte
 {#if !hideTabBar}
-    <div class="flex gap-1 min-w-0 overflow-x-auto scrollbar-hidden">
-        ... existing tab buttons ...
+    <div class="flex items-center justify-between px-2 pt-2.5 pb-2 shrink-0">
+        ... tab buttons + close button ...
     </div>
 {/if}
 ```
 
-#### 3. Wrap desktop tab buttons (line 439)
+#### 3. Wrap desktop tab bar container (line 438)
 **File**: `open-webui/src/lib/components/chat/ChatControls.svelte`
-**Location**: Line 439 — the identical `<div class="flex gap-1 ...">` in the desktop pane
+**Location**: Line 438 — the identical container in the desktop pane
 
-Same wrap:
+Same wrap (lines 438-490):
 ```svelte
 {#if !hideTabBar}
-    <div class="flex gap-1 min-w-0 overflow-x-auto scrollbar-hidden">
-        ... existing tab buttons ...
+    <div class="flex items-center justify-between px-2 pt-2.5 pb-2 shrink-0">
+        ... tab buttons + close button ...
     </div>
 {/if}
 ```
-
-The close (X) button sits outside this div (at lines 328 and 474), so it remains visible.
 
 ### Success Criteria:
 
@@ -76,9 +73,9 @@ The close (X) button sits outside this div (at lines 328 and 474), so it remains
 - [ ] No TypeScript errors in `ChatControls.svelte`
 
 #### Manual Verification:
-- [ ] Open a chat with terminal connected → open controls panel → tab buttons are hidden, only close (X) button visible
-- [ ] Video player takes full vertical space without tab bar above it
-- [ ] Close (X) button still works to dismiss the panel
+- [ ] Open a chat with terminal connected → open controls panel → entire tab bar is gone, video sits at top
+- [ ] Video player takes full vertical space without any bar above it
+- [ ] Panel can still be closed via pane resizer drag (desktop) or tapping outside drawer (mobile)
 - [ ] Without a terminal selected, tab bar appears normally
 - [ ] On mobile (narrow viewport), same behavior in the drawer view
 
