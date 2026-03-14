@@ -69,8 +69,8 @@ Same wrap (lines 438-490):
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Frontend builds without errors: `make dev-frontend` starts cleanly
-- [ ] No TypeScript errors in `ChatControls.svelte`
+- [x] Frontend builds without errors: `make dev-frontend` starts cleanly
+- [x] No TypeScript errors in `ChatControls.svelte`
 
 #### Manual Verification:
 - [ ] Open a chat with terminal connected → open controls panel → entire tab bar is gone, video sits at top
