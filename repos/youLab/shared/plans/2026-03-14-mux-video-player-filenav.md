@@ -70,9 +70,9 @@ cd open-webui && npm install @mux/mux-player
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Package installs without errors
-- [ ] `node_modules/@mux/mux-player` exists
-- [ ] `package.json` contains `@mux/mux-player` in dependencies
+- [x] Package installs without errors
+- [x] `node_modules/@mux/mux-player` exists
+- [x] `package.json` contains `@mux/mux-player` in dependencies
 
 ---
 
@@ -136,8 +136,8 @@ Create a self-contained `VideoPlayer.svelte` component that wraps `<mux-player>`
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] File exists at `open-webui/src/lib/components/chat/FileNav/VideoPlayer.svelte`
-- [ ] No TypeScript errors: `cd open-webui && npx svelte-check --threshold error`
+- [x] File exists at `open-webui/src/lib/components/chat/FileNav/VideoPlayer.svelte`
+- [x] No TypeScript errors: `cd open-webui && npx svelte-check --threshold error`
 
 ---
 
@@ -176,8 +176,8 @@ This uses Mux's public demo playback ID. The component's `{#if playbackId || src
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] No TypeScript/Svelte errors: `cd open-webui && npx svelte-check --threshold error`
-- [ ] Build succeeds: `cd open-webui && npm run build`
+- [x] No TypeScript/Svelte errors: `cd open-webui && npx svelte-check --threshold error`
+- [x] Build succeeds: `cd open-webui && npm run build`
 
 #### Manual Verification:
 - [ ] Video player appears at the top of the FileNav sidebar (above breadcrumbs/toolbar)
