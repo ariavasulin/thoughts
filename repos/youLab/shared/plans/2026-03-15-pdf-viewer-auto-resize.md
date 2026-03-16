@@ -123,7 +123,7 @@ onDestroy(() => {
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Frontend dev server starts without errors: `make dev-frontend`
+- [x] Frontend dev server starts without errors: `make dev-frontend`
 
 #### Manual Verification:
 - [ ] Open a PDF in the FileNav panel (controls pane)
