@@ -1,0 +1,34 @@
+# stale-context-cleaner.toml - Cleans up outdated context notes
+
+[agent]
+id = "stale-context-cleaner"
+name = "Stale Context Cleaner"
+description = "Removes outdated context notes and consolidates memory"
+version = "1.0.0"
+enabled = true
+
+[triggers]
+schedule = "0 4 * * *"  # 4 AM daily (after insight-harvester)
+
+[triggers.idle]
+enabled = false
+
+[scope]
+agent_types = ["tutor"]
+all_users = true
+batch_size = 100
+
+[[honcho.queries]]
+id = "context_relevance"
+question = "Which of this student's stored context notes are still relevant? Which are outdated or superseded?"
+target_block = "human"
+target_field = "context_notes"
+transform = "replace"
+
+[memory]
+conflict_strategy = "replace"
+max_context_notes = 10
+max_facts = 20
+
+[limits]
+max_runtime_minutes = 20

@@ -1,0 +1,126 @@
+# Sleep Agent Configuration Schema
+# ==========================================================================
+#
+# One TOML file per agent. Place in: config/sleep_agents/*.toml
+#
+# Directory structure:
+#   config/sleep_agents/
+#     insight-harvester.toml    <- This file
+#     progress-reporter.toml
+#     engagement-monitor.toml
+#     weekly-summary.toml
+#
+# All .toml files in the directory are loaded and registered automatically.
+#
+# Reference: thoughts/shared/research/2026-01-06-http-service-architectural-significance.md
+
+# AGENT DEFINITION
+# ==========================================================================
+[agent]
+id = "insight-harvester"  # Must match filename (insight-harvester.toml)
+name = "Student Insight Harvester"
+description = "Queries Honcho for student insights and enriches Letta memory"
+version = "1.0.0"
+enabled = true
+
+# TRIGGERS - When does this agent run?
+# ============================================================================
+[triggers]
+# Scheduled execution (cron syntax)
+schedule = "0 3 * * *"  # 3 AM daily
+# Idle-based execution
+[triggers.idle]
+enabled = true
+idle_threshold_minutes = 30  # Run after 30 min of user inactivity
+cooldown_minutes = 60        # Don't re-run within 60 min
+# Manual/on-demand execution
+[triggers.manual]
+enabled = true
+endpoint = "/agents/{agent_id}/run"  # API endpoint to trigger
+
+# SCOPE - What does this agent operate on?
+# ============================================================================
+[scope]
+# Which agent types to process (from AgentTemplateRegistry)
+agent_types = ["tutor"]
+
+# User filtering (optional)
+# user_filter = "active_last_7_days"  # or specific user_ids
+all_users = true
+
+# Batch settings
+batch_size = 50           # Process N users per run
+batch_delay_seconds = 2   # Delay between batches (rate limiting)
+
+# HONCHO QUERIES - What insights to gather
+# ============================================================================
+
+[[honcho.queries]]
+id = "learning_style"
+question = "What learning style works best for this student? Do they prefer examples, theory, or hands-on practice?"
+target_block = "human"
+target_field = "context_notes"
+
+[[honcho.queries]]
+id = "engagement"
+question = "How engaged is this student? What seems to motivate or demotivate them?"
+target_block = "human"
+target_field = "context_notes"
+
+[[honcho.queries]]
+id = "communication_style"
+question = "How should I adjust my communication style for this student? Are they responding better to direct feedback or gentle suggestions?"
+target_block = "persona"
+target_field = "constraints"
+transform = "prepend"  # prepend | append | replace
+
+[[honcho.queries]]
+id = "progress_summary"
+question = "Summarize this student's progress and any patterns in their work."
+target_block = "human"
+target_field = "facts"
+
+# MEMORY ENRICHMENT - How to update Letta memory
+# ============================================================================
+
+[memory]
+# How to handle existing values
+conflict_strategy = "merge"  # merge | replace | append
+
+# Maximum entries per field (for lists)
+max_context_notes = 10
+max_facts = 20
+
+# Insight freshness
+insight_ttl_days = 7  # Re-query if insight older than N days
+
+# Formatting
+[memory.formatting]
+prefix = "[Honcho Insight]"
+include_timestamp = true
+include_confidence = true  # If Honcho provides confidence scores
+
+# RESOURCE LIMITS
+# ============================================================================
+
+[limits]
+max_runtime_minutes = 30
+max_honcho_queries_per_run = 500
+max_letta_updates_per_run = 500
+retry_attempts = 3
+retry_delay_seconds = 5
+
+# OBSERVABILITY
+# ============================================================================
+
+[observability]
+log_level = "info"
+trace_enabled = true
+metrics_enabled = true
+
+# What to track
+[observability.metrics]
+track_query_latency = true
+track_insight_quality = true  # If we add quality scoring later
+track_memory_updates = true
+Result

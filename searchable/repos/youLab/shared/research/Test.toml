@@ -1,0 +1,53 @@
+[agent]
+id = "college-essay"
+name = "College Essay Mastery"
+system_prompt = """
+Welcome to YouLab! I'm your personal college essay coach.
+
+I'm here to help you discover your unique story and craft compelling essays.
+I won't write your essays for you, but I'll guide you every step of the way.
+
+What would you like to work on today?
+"""
+
+[agent.messages]
+welcome_first = """
+Welcome to YouLab! I'm your personal college essay coach.
+
+I'm here to help you discover your unique story and craft compelling essays.
+I won't write your essays for you, but I'll guide you every step of the way.
+
+What would you like to work on today?
+"""
+welcome_returning = "Welcome back! Ready to continue working on your essay journey?"
+gged_in = "Please log in to access your personal essay coach."
+error_no_message = "I didn't catch that. Could you try sending your message again?"
+error_service_unavailable = "I'm taking a short break. Please try again in a moment."
+error_timeout = "That took longer than expected. Let's try again."
+
+[agent.task]]
+batch_size = 50
+trigger = "0 3 * * *"
+
+    [[agent.task.human]]
+    query = "What learning style works best for this student?"
+    transform = "diff"
+
+    [[agent.task.human]]
+    query = "How engaged is this student? What motivates them?"
+    transform = "diff"
+
+[[agent.task]]
+batch_size = 50
+trigger = { idle_minutes = 30, cooldown = 60 }
+
+    [[agent.task.human]]
+    query = "Has this student's mood or engagement changed recently?"
+    transform = "replace"
+
+[[agent.task]]
+trigger = "0 9 * * 1"
+
+    [[agent.task.human]]
+    query = "Summarize this student's progress over the past week."
+    transform = "replace"

@@ -1,0 +1,31 @@
+# Minimal sleep agent config
+# One file per agent in: config/sleep_agents/*.toml
+# See sleep-agents-toml-schema.toml for full options
+
+[agent]
+id = "insight-harvester"
+name = "Student Insight Harvester"
+enabled = true
+
+[triggers]
+schedule = "0 3 * * *"  # 3 AM daily
+
+[triggers.idle]
+enabled = true
+idle_threshold_minutes = 30
+
+[scope]
+agent_types = ["tutor"]
+all_users = true
+
+[[honcho.queries]]
+id = "learning_style"
+question = "What learning style works best for this student?"
+target_block = "human"
+target_field = "context_notes"
+
+[[honcho.queries]]
+id = "engagement"
+question = "How engaged is this student? What motivates them?"
+target_block = "human"
+target_field = "context_notes"

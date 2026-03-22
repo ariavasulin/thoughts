@@ -1,0 +1,133 @@
+# Course Sleep Agents Configuration
+# ==========================================================================
+#
+# One TOML file per course. Place in: config/courses/{course_id}/sleep_agents.toml
+#
+# Directory structure:
+#   config/courses/
+#     college-essay/
+#       course.toml           <- Course metadata
+#       sleep_agents.toml     <- This file (multiple agents)
+#     sat-prep/
+#       course.toml
+#       sleep_agents.toml
+#
+# ==========================================================================
+
+[course]
+id = "college-essay"
+name = "College Essay Mastery"
+
+# ==========================================================================
+# SHARED DEFAULTS - Applied to all agents unless overridden
+# ==========================================================================
+
+[defaults]
+enabled = true
+scope.agent_types = ["tutor"]
+scope.all_users = true
+limits.retry_attempts = 3
+observability.log_level = "info"
+observability.trace_enabled = true
+
+# ==========================================================================
+# AGENTS - Define multiple sleep agents for this course
+# ==========================================================================
+
+[[agents]]
+id = "insight-harvester"
+name = "Student Insight Harvester"
+description = "Gathers learning style and engagement insights from Honcho"
+
+[agents.triggers]
+schedule = "0 3 * * *"  # 3 AM daily
+
+[agents.triggers.idle]
+enabled = true
+idle_threshold_minutes = 30
+
+[[agents.honcho.queries]]
+id = "learning_style"
+question = "What learning style works best for this student?"
+target_block = "human"
+target_field = "context_notes"
+
+[[agents.honcho.queries]]
+id = "engagement"
+question = "How engaged is this student? What motivates them?"
+target_block = "human"
+target_field = "context_notes"
+
+# --------------------------------------------------------------------------
+
+[[agents]]
+id = "progress-reporter"
+name = "Weekly Progress Reporter"
+description = "Generates weekly progress summaries for students and instructors"
+
+[agents.triggers]
+schedule = "0 9 * * 1"  # Monday 9 AM
+
+[agents.triggers.manual]
+enabled = true
+
+[[agents.honcho.queries]]
+id = "weekly_summary"
+question = "Summarize this student's progress over the past week. What did they accomplish? What challenges did they face?"
+target_block = "human"
+target_field = "facts"
+
+[agents.output]
+generate_report = true
+report_format = "markdown"
+notify_student = true
+notify_instructor = false
+
+# --------------------------------------------------------------------------
+
+[[agents]]
+id = "engagement-monitor"
+name = "Engagement Monitor"
+description = "Detects disengagement and triggers re-engagement strategies"
+
+[agents.triggers]
+schedule = "0 */6 * * *"  # Every 6 hours
+
+[agents.triggers.idle]
+enabled = true
+idle_threshold_minutes = 60
+cooldown_minutes = 360  # 6 hours
+
+[[agents.honcho.queries]]
+id = "disengagement_check"
+question = "Is this student showing signs of disengagement or frustration? What specific behaviors indicate this?"
+target_block = "human"
+target_field = "context_notes"
+
+[agents.actions]
+# Conditional actions based on query results
+on_disengagement = "notify_instructor"
+threshold = 0.7  # Confidence threshold
+
+# --------------------------------------------------------------------------
+
+[[agents]]
+id = "essay-feedback-prep"
+name = "Essay Feedback Preparer"
+description = "Pre-analyzes essay drafts during off-hours for faster feedback"
+
+enabled = false  # Override default - not yet implemented
+
+[agents.triggers]
+schedule = "0 2 * * *"  # 2 AM daily
+
+[agents.scope]
+# Override defaults - only for students with pending drafts
+all_users = false
+user_filter = "has_pending_draft"
+
+[[agents.honcho.queries]]
+id = "writing_patterns"
+question = "What patterns do you see in this student's writing? Strengths? Areas for improvement?"
+target_block = "human"
+target_field = "context_notes"
