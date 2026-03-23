@@ -128,12 +128,164 @@ You could NOT reconstruct: visual layout, control types/positions, VBA logic, ev
 - `metadata/access/msysobjects.csv` — Contains all 334 form names + binary LvProp blobs
 - `metadata/access/queries.csv` — 1,055 reconstructed queries (form RecordSources)
 
+## What the SaveAsText Export Format Looks Like
+
+The format is a hierarchical text file using `Begin`/`End` blocks with indentation. Example from a real form export:
+
+```
+Version =20
+VersionRequired =20
+Begin Form
+    PopUp = NotDefault
+    RecordSelectors = NotDefault
+    AutoCenter = NotDefault
+    Width =9360
+    Caption ="MSAccessVCS"
+    OnLoad ="[Event Procedure]"
+    RecSrcDt = Begin
+        0x79e78b777268e540
+    End
+    Begin
+        Begin Label
+            BackStyle =0
+            FontSize =11
+            FontName ="Calibri"
+        End
+        Begin CommandButton
+            FontSize =11
+            FontWeight =400
+            Shape =1
+        End
+        Begin Section
+            Height =6480
+            BackColor =15130848
+            Name ="Detail"
+            Begin
+                Begin CommandButton
+                    Left =1800
+                    Top =960
+                    Width =900
+                    Height =840
+                    Name ="cmdExport"
+                    Caption ="Export All Source"
+                    OnClick ="[Event Procedure]"
+                End
+            End
+        End
+    End
+End
+```
+
+Key format rules:
+- `Begin <Type>` / `End` delimiters for nested blocks
+- `<Property> =<Value>` pairs (only non-default values are written)
+- Binary data (GUIDs, NameMaps, images) encoded as hex in `Begin`/`End` blocks
+- Event procedures referenced as `"[Event Procedure]"` — actual VBA follows in a `CodeBehindForm` section
+- Control positions in **twips** (1 twip = 1/1440 inch ≈ 1/15 pixel)
+- Control type defaults declared first, then instances inside `Begin Section` blocks
+
+## What Other People Have Done
+
+### Version Control / Full Database Rebuild (Well-Established)
+
+Rebuilding Access databases from SaveAsText exports is a **well-established practice**:
+
+- **[msaccess-vcs-addin](https://github.com/joyfullservice/msaccess-vcs-addin)**: The most mature tool. Exports all objects into a `{db}.src/` folder structure:
+  ```
+  forms/frmMyForm.bas       # Form design (SaveAsText)
+  forms/frmMyForm.cls       # VBA code-behind
+  reports/rptMyReport.bas   # Report design
+  queries/qryMyQuery.bas    # Query SQL
+  modules/modMyModule.bas   # VBA modules
+  tbldefs/tblMyTable.xml    # Table definitions (XML)
+  dbs-properties.json       # Database properties
+  vbe-references.json       # VBA library references
+  ```
+  Supports "Build from Source" — creating a complete `.accdb` from exported text files. Converts UCS-2 to UTF-8 for git. Supports Access 2010–365.
+
+- **[decompose-msaccess](https://github.com/toddmowen/decompose-msaccess/blob/master/decompose-msaccess.vbs)**: Older VBScript approach using `.ADF` (forms), `.ADR` (reports), `.ADQ` (queries) extensions.
+
+- **[OASIS-SVN](https://accessexperts.com/blog/2019/07/02/using-oasis-svn-and-git-for-access-source-code-control/)**: Commercial COM add-in that decomposes and recomposes databases.
+
+- **Manual rebuild**: [RipTutorial guide](https://riptutorial.com/ms-access/example/26375/rebuild-the-entire-database) documents using `Application.LoadFromText` to reconstruct all objects. Tables require separate handling (XML/CSV import).
+
+### Automated Access → Web Migrations (Commercial Only)
+
+No open-source project converts Access forms to web UIs. Only commercial tools exist:
+
+| Tool | Output | Approach | Link |
+|------|--------|----------|------|
+| **GAPVelocity AI Migrator** | ASP.NET Core + KendoUI + C# | "Hybrid AI + deterministic semantic pattern matching" from live .accdb | [gapvelocity.ai](https://www.gapvelocity.ai/migrate/ms-access) |
+| **Antrow Software** | HTML5 + ASP.NET + JavaScript | 620+ databases migrated | [antrow.com](https://antrow.com/) |
+| **fecher accessPORTER** | Wisej.NET browser app | Replaces Access presentation layer | [fecher.net](https://www.fecher.net/our-services/access-migration/) |
+| **FMS Total Access Analyzer** | Documentation only | Generates form dictionary/control reports | [fmsinc.com](https://www.fmsinc.com/MicrosoftAccess/Documentation/) |
+
+All of these work from the **live `.accdb` file via COM automation**, not from SaveAsText exports.
+
+### Microsoft's Own Migration Path
+
+- **[Access to Power Apps + Dataverse](https://learn.microsoft.com/en-us/power-apps/maker/data-platform/migrate-access-to-dataverse)**: GA tool that migrates Access tables → Dataverse + generates Power Apps. Handles data and basic table structure but **does not convert forms** — you rebuild UI manually in Power Apps.
+- **[SSMA for Access](https://learn.microsoft.com/en-us/sql/ssma/access/sql-server-migration-assistant-for-access-accesstosql)**: Migrates data to SQL Server. No form conversion.
+
+### SaveAsText Parsers (None Exist Standalone)
+
+No standalone parser for the SaveAsText format exists in Python, JavaScript, or any other language:
+
+- **[Rubberduck VBA](https://github.com/rubberduck-vba/Rubberduck/issues/1647)** (C#): Has internal SaveAsText parsing for extracting control names for IntelliSense, but it's embedded in a large C# codebase — not a reusable library.
+- The format is structurally simple (recursive `Begin`/`End` grammar with `Key = Value` properties) and would be straightforward to parse with a stack-based approach.
+
+### Binary Format Reverse Engineering
+
+The Access binary format has been **partially** reverse-engineered, but only for the data layer:
+
+| Resource | Covers | Does NOT Cover |
+|----------|--------|----------------|
+| [Unofficial MDB Guide](http://jabakobob.net/mdb/) | Page structure, tables, indexes | Forms, reports, VBA |
+| [mdbtools HACKING.md](https://github.com/mdbtools/mdbtools/blob/dev/HACKING.md) | Byte-level Jet3/Jet4 format | Form/report blobs |
+| [Jackcess source code](https://github.com/jahlborn/jackcess) | Most complete accdb knowledge | Form deserialization |
+| [Library of Congress](https://www.loc.gov/preservation/digital/formats/fdd/fdd000463.shtml) | Format identification | Internal structure |
+
+**Nobody has reverse-engineered the form/report binary blob format** stored in MSysAccessStorage. Microsoft has never published a specification. The mdbtools FAQ explicitly lists form extraction as an aspirational future goal.
+
+### COM Automation via Python (Windows Only)
+
+On Windows, `pywin32` can automate Access via COM to extract everything programmatically:
+
+```python
+import win32com.client
+app = win32com.client.Dispatch("Access.Application")
+app.OpenCurrentDatabase(r"C:\path\to\DWSJA.accdb")
+for form in app.CurrentProject.AllForms:
+    app.SaveAsText(2, form.Name, f"C:\\export\\{form.Name}.txt")  # 2 = acForm
+app.Quit()
+```
+
+This is equivalent to the VBA approach but scriptable from Python. References: [Python win32com docs](https://mail.python.org/pipermail/python-win32/2006-February/004236.html), [Practical Business Python](https://pbpython.com/windows-com.html).
+
+## Practical Paths Forward for DWS
+
+### Path 1: Full Extraction (Recommended First Step)
+Run `SaveAsText` or install [msaccess-vcs-addin](https://github.com/joyfullservice/msaccess-vcs-addin) on the Windows machine. One-time export of all 334 forms, 51 reports, and 3 modules. Copy to Mac. This gives you complete, parseable text definitions of every UI component.
+
+### Path 2: Build a SaveAsText Parser (Novel but Feasible)
+No one has published a standalone Python parser for the format. The grammar is simple enough to build one — recursive `Begin`/`End` blocks, `Key = Value` properties, hex-encoded binary sections. This would let you:
+- Map every form → its RecordSource query → the underlying SQL Server tables
+- Inventory all controls (type, data binding, position)
+- Generate documentation or a web UI scaffold
+
+### Path 3: LvProp Blob Decoder (No Windows Needed)
+Parse the wide-character strings already in `msysobjects.csv` to extract form→query→field mappings. Gets you a "form skeleton" without needing to touch the Windows machine.
+
+### Path 4: Commercial Migration
+If the end goal is replacing Access entirely, tools like GAPVelocity or Antrow handle the full conversion. These are substantial investments but produce working web applications.
+
 ## Related Research
 
 - `thoughts/shared/research/2026-03-21-codebase-research-for-claude-md.md` — Codebase overview
 
 ## Open Questions
 
-1. **LvProp blob parsing** — A custom Python script could decode the wide-character strings in LvProp to extract form→query→field mappings without needing Access. This would give a partial "form skeleton" (which fields appear on which form, which queries feed which forms). Worth building?
-2. **SaveAsText on Windows** — Has this been run yet? If not, a one-time extraction on the Windows machine would unlock complete form analysis on Mac.
-3. **Rebuild target platform** — If rebuilding forms, what platform? A modern web UI, Power Apps, or reconstructing within Access itself? The answer determines how much of the original layout detail matters.
+1. **SaveAsText on Windows** — Has this been run yet? If not, a one-time extraction on the Windows machine would unlock complete form analysis on Mac.
+2. **Parser scope** — If building a SaveAsText parser, what's the target output? Documentation? A web UI scaffold? A data lineage graph?
+3. **Rebuild target platform** — If rebuilding forms, what platform? React, Power Apps, or staying in Access? Determines how much layout detail matters.
+4. **VBA complexity** — The 3 modules (`JsonConverter`, `modUpdateSched`, `modUtilities`) and form code-behind may contain significant business logic. How much VBA exists and how critical is it?
