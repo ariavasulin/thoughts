@@ -68,11 +68,11 @@ Delete all test files that only import from `youlab_server`:
 - Remove `QueryHonchoTool` from `src/ralph/tools/__init__.py` exports
 
 ### Success Criteria:
-- [ ] `src/youlab_server/` doesn't exist
-- [ ] `tests/` only contains `tests/__init__.py` and `tests/ralph/`
-- [ ] `config/courses/` doesn't exist
-- [ ] `src/ralph/tools/query_honcho.py` doesn't exist
-- [ ] `uv run pytest tests/ralph/` passes
+- [x] `src/youlab_server/` doesn't exist
+- [x] `tests/` only contains `tests/__init__.py` and `tests/ralph/`
+- [x] `config/courses/` doesn't exist
+- [x] `src/ralph/tools/query_honcho.py` doesn't exist
+- [x] `uv run pytest tests/ralph/` passes
 
 ---
 
