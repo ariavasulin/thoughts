@@ -116,9 +116,9 @@ Remove/rewrite references to Letta architecture if they describe it as current.
 (This may need a judgment call on how much to rewrite vs. delete.)
 
 ### Success Criteria:
-- [ ] No Letta-*.md files in docs/
-- [ ] `_sidebar.md` has no dead links
-- [ ] Docsify site doesn't 404 on any sidebar link
+- [x] No Letta-*.md files in docs/
+- [x] `_sidebar.md` has no dead links
+- [x] Docsify site doesn't 404 on any sidebar link
 
 ---
 
