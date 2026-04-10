@@ -31,9 +31,9 @@ SHOULDN'T be. No new features, no refactoring logic — pure deletion and config
 - Line 16: `[https://hdsr.mitpress.mit.edu/pub/ujvharkk/release/1 | Intention]` → `[Intention](https://hdsr.mitpress.mit.edu/pub/ujvharkk/release/1)`
 
 ### Success Criteria:
-- [ ] Root README.md is the full architecture doc
-- [ ] `.env.example` only references Ralph-stack config
-- [ ] No typos in manifesto
+- [x] Root README.md is the full architecture doc
+- [x] `.env.example` only references Ralph-stack config
+- [x] No typos in manifesto
 
 ---
 
