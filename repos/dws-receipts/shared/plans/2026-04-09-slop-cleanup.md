@@ -221,8 +221,8 @@ Key files:
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `grep -rn 'console\.\(log\|warn\)' dws-app/src/ --include='*.ts' --include='*.tsx' | grep -v node_modules | wc -l` returns 0
-- [ ] `npm run build` succeeds
+- [x] `grep -rn 'console\.\(log\|warn\)' dws-app/src/ --include='*.ts' --include='*.tsx' | grep -v node_modules | wc -l` returns 0
+- [x] `npm run build` succeeds
 
 ---
 
