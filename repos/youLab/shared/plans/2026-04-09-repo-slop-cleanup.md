@@ -93,10 +93,10 @@ Delete all test files that only import from `youlab_server`:
 2. `coverage-html` target: `--cov=src/youlab_server` → `--cov=src/ralph`
 
 ### Success Criteria:
-- [ ] `uv run pytest tests/ralph/` measures coverage of `src/ralph`
-- [ ] `make coverage` points at `src/ralph`
-- [ ] No references to `youlab_server` remain in pyproject.toml or Makefile
-- [ ] `uv sync` succeeds
+- [x] `uv run pytest tests/ralph/` measures coverage of `src/ralph`
+- [x] `make coverage` points at `src/ralph`
+- [x] No references to `youlab_server` remain in pyproject.toml or Makefile
+- [x] `uv sync` succeeds
 
 ---
 
