@@ -110,9 +110,9 @@ rm dws-app/README.md
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` in `dws-app/` succeeds
-- [ ] `ls dws-app/src/components/ui/ | wc -l` drops from ~48 to ~17
-- [ ] `cat dws-app/src/lib/query-client.ts` → file not found
+- [x] `npm run build` in `dws-app/` succeeds
+- [x] `ls dws-app/src/components/ui/ | wc -l` drops from ~48 to ~17
+- [x] `cat dws-app/src/lib/query-client.ts` → file not found
 
 ---
 
