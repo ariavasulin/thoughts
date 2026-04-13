@@ -118,10 +118,10 @@ Replace contents with:
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] `ls docs/ | wc -l` returns 6
-- [ ] All sidebar links resolve to existing files
-- [ ] `grep -ri "letta" docs/ -l` returns only `Architecture.md`
-- [ ] `git status` shows only the expected deletions + `_sidebar.md` modification
+- [x] `ls docs/ | wc -l` returns 7 (6 .md + index.html)
+- [x] All sidebar links resolve to existing files
+- [x] `grep -ri "letta" docs/ -l` returns only `Architecture.md`
+- [x] `git status` shows only the expected deletions + `_sidebar.md` modification
 
 #### Manual Verification:
 - [ ] Skim `_sidebar.md` — clean, no dead links
