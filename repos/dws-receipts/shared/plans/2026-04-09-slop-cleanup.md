@@ -337,9 +337,9 @@ Replace `useState<any>(null)` with `useState<User | null>(null)` (import `User` 
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` succeeds with zero type errors
-- [ ] `grep -rn 'useState<any>' dws-app/src/` returns nothing
-- [ ] `grep -rn '"Pending"\|"Approved"\|"Rejected"\|"Reimbursed"' dws-app/src/lib/types.ts` returns nothing
+- [x] `npm run build` succeeds with zero type errors
+- [x] `grep -rn 'useState<any>' dws-app/src/` returns nothing
+- [x] `grep -rn '"Pending"\|"Approved"\|"Rejected"\|"Reimbursed"' dws-app/src/lib/types.ts` returns nothing
 
 ---
 
@@ -383,8 +383,8 @@ Remove null checks, guards, and branches that can never execute.
 ### Success Criteria
 
 #### Automated Verification:
-- [ ] `npm run build` succeeds
-- [ ] `grep -n 'signal.aborted' dws-app/src/app/dashboard/page.tsx dws-app/src/app/batch-review/page.tsx` returns nothing
+- [x] `npm run build` succeeds
+- [x] `grep -n 'signal.aborted' dws-app/src/app/dashboard/page.tsx dws-app/src/app/batch-review/page.tsx` returns nothing
 
 ---
 
